@@ -1,0 +1,38 @@
+{
+  "iwr_ports": {
+    "cli": "COM19",
+    "data": "COM20",
+    "cfg_path": "isk_config.cfg"
+  },
+    
+  "cooldown_seconds": 0.1,
+  "retention_days": 30,                                                                                                                  
+  "selected_camera": 0,
+  "cameras": [
+    {
+      "url": "rtsp://root:2024@192.168.1.241/axis-media/media.amp?streamprofile=stream1",
+      "snapshot_url": "http://192.168.1.241/axis-cgi/jpg/image.cgi",
+      "username": "root",
+      "password": "2024",
+      "stream_type": "rtsp"
+    },
+    {
+      "url": "http://192.168.1.240/axis-cgi/mjpg/video.cgi",
+      "username": "root",
+      "password": "Essi1234",
+      "stream_type": "mjpeg"
+    }
+  ],
+  "dynamic_speed_limits": {
+    "HUMAN": 2.0,
+    "CAR": 70.0,
+    "TRUCK": 50.0,
+    "BUS": 50.0,
+    "BIKE": 60.0,
+    "BICYCLE": 10.0,
+    "UNKNOWN": 50.0,
+    "default": 2.0
+  },
+  "annotation_conf_threshold": 0.5,
+  "label_format": "{type} | {speed:.1f} km/h"
+}
