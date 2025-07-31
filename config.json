@@ -1,7 +1,7 @@
 {
   "iwr_ports": {
-    "cli": "COM19",
-    "data": "COM20",
+    "cli": "/dev/serial/by-id/usb-Silicon_Labs_CP2105_Dual_USB_to_UART_Bridge_Controller_0151A9D6-if00-port0",
+    "data": "/dev/serial/by-id/usb-Silicon_Labs_CP2105_Dual_USB_to_UART_Bridge_Controller_0151A9D6-if01-port0",
     "cfg_path": "isk_config.cfg"
   },
     

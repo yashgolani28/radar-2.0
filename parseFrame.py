@@ -8,7 +8,7 @@ import math
 
 import os
 import datetime
-
+from logger import logger
 # Local File Imports
 from parseTLVs import *
 from gui_common import *
@@ -39,21 +39,20 @@ def parseStandardFrame(frameData):
 
     # Initialize the point cloud struct since it is modified by multiple TLV's
     # Each point has the following: X, Y, Z, Doppler, SNR, Noise, Track index
+    if numDetectedObj > 500:
+        return {"trackData": [], "numDetectedTracks": 0}
+
     outputDict['pointCloud'] = np.zeros((numDetectedObj, 7), np.float64)
     # Initialize the track indexes to a value which indicates no track
     outputDict['pointCloud'][:, 6] = 255
     # Find and parse all TLV's
     for i in range(numTLVs):
-        # print ("Frame Data at start of TLV: ", frameData[:10])
         try:
             tlvType, tlvLength = tlvHeaderDecode(frameData[:tlvHeaderLength])
             frameData = frameData[tlvHeaderLength:]
-            # tlvLength = tlvLength - tlvHeaderLength
-        except:
-            print('TLV Header Parsing Failure')
+        except Exception as e:
             outputDict['error'] = 2
-        # print ("TLV Number: ", tlvType)
-        # print ("Frame Data before tlv parse: ", frameData[:10])
+            break  # stop parsing further
 
         # Detected Points
         if (tlvType == MMWDEMO_OUTPUT_MSG_DETECTED_POINTS): 
@@ -91,9 +90,8 @@ def parseStandardFrame(frameData):
                 track_data = parseTrackTLV(frameData[:tlvLength], tlvLength)
                 outputDict['trackData'] = track_data
                 outputDict['numDetectedTracks'] = len(track_data)
-                print(f"[parseTrackTLV] Parsed {len(track_data)} target(s)")
+                logger.info(f"[parseTrackTLV] Parsed {len(track_data)} target(s)")
             except Exception as e:
-                print(f"[ParserError] parseTrackTLV failed: {e}")
                 outputDict['trackData'] = []
                 outputDict['numDetectedTracks'] = 0
         elif (tlvType == MMWDEMO_OUTPUT_MSG_TRACKERPROC_TARGET_HEIGHT):
@@ -113,7 +111,11 @@ def parseStandardFrame(frameData):
         elif (tlvType == MMWDEMO_OUTPUT_MSG_VITALSIGNS):
             outputDict['vitals'] = parseVitalSignsTLV(frameData[:tlvLength], tlvLength)
         else:
-            print ("Warning: invalid TLV type: %d" % (tlvType))
+            outputDict.setdefault('unknown_tlvs', []).append({
+                'type': tlvType,
+                'length': tlvLength,
+                'raw_data': frameData[:tlvLength].hex()[:200]  # store first 100 bytes as hex preview
+            })
 
         # print ("Frame Data after tlv parse: ", frameData[:10])
         # Move to next TLV

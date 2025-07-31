@@ -12,7 +12,7 @@ class IWR6843Logger:
             "timestamp", "object_id", "motion_state",
             "range_m", "azimuth_deg", "elevation_deg",
             "x", "y", "z",
-            "vRel", "snr", "classification"
+            "vRel", "snr", "direction", "classification"
         ]
         with open(self.filepath, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=self.fields)
@@ -24,15 +24,17 @@ class IWR6843Logger:
             for t in targets:
                 writer.writerow({
                     "timestamp": datetime.fromtimestamp(t.get("timestamp", time.time())).isoformat(),
-                    "object_id": t.get("id", ""),
-                    "motion_state": t.get("motionState", "unknown"),
+                    "object_id": t.get("object_id", t.get("id", "")),
+                    "motion_state": t.get("motion_state", "unknown"),
                     "range_m": round(t.get("distance", 0.0), 2),
-                    "azimuth_deg": 0.0,  # Not available from IWR6843 directly in current config
-                    "elevation_deg": 0.0,
+                    "azimuth_deg": t.get("azimuth", 0.0),
+                    "elevation_deg": t.get("elevation", 0.0),
                     "x": round(t.get("posX", 0.0), 2),
                     "y": round(t.get("posY", 0.0), 2),
                     "z": round(t.get("posZ", 0.0), 2),
                     "vRel": round((t.get("velX", 0.0)**2 + t.get("velY", 0.0)**2)**0.5, 2),
                     "snr": round(t.get("confidence", 0.0) * 10, 1),
+                    "direction": t.get("direction", "STATIC"),
                     "classification": t.get("type", "UNKNOWN")
                 })
+

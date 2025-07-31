@@ -9,14 +9,14 @@ from classify_objects import ObjectClassifier
 classifier = ObjectClassifier()                                                                                                                                                                                         
 cfg = load_config()
 ports = cfg.get("iwr_ports", {})
-cli_port = ports.get("cli", "COM19")
-data_port = ports.get("data", "COM20")
+cli_port = ports.get("cli", "/dev/serial/by-id/usb-Silicon_Labs_CP2105_Dual_USB_to_UART_Bridge_Controller_0151A9D6-if00-port0")
+data_port = ports.get("data", "/dev/serial/by-id/usb-Silicon_Labs_CP2105_Dual_USB_to_UART_Bridge_Controller_0151A9D6-if01-port0")
 cfg_path = ports.get("cfg_path", "isk_config.cfg")
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 DEST = ("127.0.0.1", 5005)
 
-radar = IWR6843Interface(cli=cli_port, data=data_port, cfg_path=cfg_path)
+radar = IWR6843Interface()
 logger = IWR6843Logger()
 
 print("[INFO] Started reading radar data... Press Ctrl+C to stop.")

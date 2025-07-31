@@ -208,9 +208,12 @@ def parseTrackTLV(tlvData, tlvLength):
                 "confidence": float(targetData[27]),
                 "speed_kmh": float(np.sqrt(targetData[4]**2 + targetData[5]**2 + targetData[6]**2) * 3.6),
                 "distance": float(np.sqrt(targetData[1]**2 + targetData[2]**2 + targetData[3]**2)),
+                "azimuth": np.rad2deg(np.arctan2(targetData[1], targetData[0] + 1e-6)),
+                "elevation": np.rad2deg(np.arctan2(targetData[3], np.sqrt(targetData[1]**2 + targetData[2]**2 + 1e-6))),
+                "snr": float(targetData[24]) if len(targetData) > 24 else 0.0,
+                "gain": float(targetData[25]) if len(targetData) > 25 else 0.0,
                 "type": "human"
             })
-            print(f"[parseTrackTLV] Parsed 1 target (exact size)")
             return targets
         except Exception as e:
             print(f"[parseTrackTLV] Single target parse failed: {e}")
@@ -242,7 +245,6 @@ def parseTrackTLV(tlvData, tlvLength):
             print(f"[parseTrackTLV] Object #{i} parse failed: {e}")
         tlvData = tlvData[targetSize:]
 
-    print(f"[parseTrackTLV] Parsed {len(targets)} target(s)")
     return targets
 
 def parseTrackHeightTLV(tlvData, tlvLength):
@@ -314,3 +316,19 @@ def parseVitalSignsTLV (tlvData, tlvLength):
     tlvData = tlvData[vitalsSize:]
 
     return vitalsOutput
+
+def parseStatsTLV(tlvData):
+    statStruct = '6I'  # 6 uint32_t values
+    if len(tlvData) < struct.calcsize(statStruct):
+        print("[parseStatsTLV] Invalid TLV length.")
+        return {}
+
+    stats = struct.unpack(statStruct, tlvData[:24])
+    return {
+        "interFrameProcTime": stats[0],
+        "transmitOutputTime": stats[1],
+        "interFrameMargin": stats[2],
+        "interChirpMargin": stats[3],
+        "activeFrameCPULoad": stats[4],
+        "interFrameCPULoad": stats[5]
+    }

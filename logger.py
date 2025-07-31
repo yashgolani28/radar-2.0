@@ -5,10 +5,11 @@ LOG_FILE = "system-logs/radar.log"
 
 def setup_logger(name="radar_logger"):
     os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
-
     logger = logging.getLogger(name)
-    logger.setLevel(logging.DEBUG)
+    if logger.handlers: 
+        return logger
 
+    logger.setLevel(logging.DEBUG)
     file_handler = logging.FileHandler(LOG_FILE)
     console_handler = logging.StreamHandler()
 

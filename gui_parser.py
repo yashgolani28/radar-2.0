@@ -102,6 +102,8 @@ class uartParser():
         try:
             if self.parserType == "Standard":
                 outputDict = parseStandardFrame(frameData)
+                if 'trackData' in outputDict and any(obj.get("speed_kmh", 0.0) > 3.0 for obj in outputDict['trackData']):
+                    print("[Stats TLV]", outputDict['stats'])
             else:
                 print('FAILURE: Bad parserType')
                 outputDict = {"error": 1}
