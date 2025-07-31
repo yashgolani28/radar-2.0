@@ -1,0 +1,33 @@
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs and outputs
+*.log
+system-logs/
+radar-logs/
+*.csv
+
+# Model weights and artifacts
+*.pkl
+*.pt
+*.onnx
+
+# Snapshots and media
+*.jpg
+*.jpeg
+*.png
+*.mp4
+
+# Configs and temp flags
+config_sent.flag
+*.cfg
+
+# Backup or editor files
+*~
+*.swp
+.DS_Store
+
+# Ignore root-level binary artifacts
+test.jpg
