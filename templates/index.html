@@ -1,0 +1,836 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Live Monitoring{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2 class="fw-bold" style="color: var(--text-color);">Detection Dashboard</h2>
+    <div class="d-flex align-items-center gap-2">
+        <span class="badge bg-success fs-6 px-3 py-2">Live Monitoring</span>
+        {% set temp = summary.pi_temperature %}
+        {% set load = summary.cpu_load %}
+
+        <span class="badge fs-6 px-3 py-2 
+            {% if temp >= 70 %} bg-danger
+            {% elif temp >= 60 %} bg-warning
+            {% else %} bg-success
+            {% endif %}
+        ">
+            Pi Temp: {{ temp }}°C
+        </span>
+
+        <span class="badge fs-6 px-3 py-2 
+            {% if load >= 2.0 %} bg-danger
+            {% elif load >= 1.0 %} bg-warning
+            {% else %} bg-primary
+            {% endif %}
+        ">
+            CPU Load: {{ load }}
+        </span>
+    </div>
+</div>
+
+<!-- Statistics Cards -->
+<div class="row row-cols-2 row-cols-md-5 g-3 mb-4" style="color: var(--text-color);">
+  {% for label, value, color in [
+    ('Total Detections', summary.total, 'text-primary'),
+    ('Vehicles', summary.vehicles, 'text-warning'),
+    ('Pedestrians', summary.humans, 'text-info'),
+    ('Avg Speed (km/h)', summary.average_speed, 'text-danger'),
+    ('Default Speed Limit', config.dynamic_speed_limits['default'], 'text-success')
+  ] %}
+  <div class="col">
+    <div class="card text-center h-100">
+      <div class="card-body">
+        <div class="display-6 fw-bold {{ color }}">{{ value }}</div>
+        <p class="mb-0 small">{{ label }}</p>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="text-end me-2 mb-3">
+  <small style="color: var(--text-color);">Last Detection: <strong>{{ summary.last_detection }}</strong></small>
+</div>
+
+<!-- Speed Limits by Object Type -->
+<div class="card shadow-sm mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center" style="color: var(--text-color);">
+    <h6 class="mb-0 fw-semibold ">Speed Limits by Object Type</h6>
+    <small>Configured thresholds</small>
+  </div>
+  <div class="card-body py-3">
+    <div class="row">
+      {% set keys = config.dynamic_speed_limits.keys()|list %}
+      {% set midpoint = (keys|length // 2 + keys|length % 2) %}
+      {% for side in ['left', 'right'] %}
+        <div class="col-md-6">
+            <div class="row g-3">
+            {% if side == 'left' %}
+                {% for key in keys[:midpoint] %}
+                <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center border rounded px-3 py-2 shadow-sm" style="background-color: var(--card-bg);">
+                    <span class="small text-uppercase fw-semibold">{{ key }}</span>
+                    <span class="fw-bold text-primary">{{ config.dynamic_speed_limits[key] }} km/h</span>
+                </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                {% for key in keys[midpoint:] %}
+                <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center border rounded px-3 py-2 shadow-sm" style="background-color: var(--card-bg);">
+                    <span class="small text-uppercase fw-semibold">{{ key }}</span>
+                    <span class="fw-bold text-primary">{{ config.dynamic_speed_limits[key] }} km/h</span>
+                </div>
+                </div>
+                {% endfor %}
+            {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+  </div>
+</div>
+
+<!-- Charts Section -->
+<div class="card shadow-sm mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <h6 class="mb-0 fw-semibold">Speed Violations by Hour</h6>
+    <select class="form-select form-select-sm w-auto" id="violationDaySelector">
+      <option value="1">Today</option>
+      <option value="7">Last 7 Days</option>
+      <option value="30" selected>Last 30 Days</option>
+    </select>
+  </div>
+  <div class="card-body">
+    <canvas id="violationHourChart" style="height:280px;"></canvas>
+  </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-lg-6 mb-3">
+        <div class="card h-100">
+            <div class="card-header bg-transparent">
+                <h6 class="mb-0 fw-semibold">Speed Distribution</h6>
+            </div>
+            <div class="card-body p-3">
+                <div class="chart-container position-relative">
+                    <div id="speedChartLoading" class="chart-loading d-flex align-items-center justify-content-center" style="height: 280px;">
+                        <div class="text-center">
+                            <div class="spinner-border text-primary mb-2" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="text-body-secondary small">Loading chart data...</p>
+                        </div>
+                    </div>
+                    <canvas id="speedChart" class="chart-canvas" style="display: none; max-height: 280px;"></canvas>
+                    <div id="speedChartError" class="chart-error text-center text-body-secondary" style="display: none;">
+                        <div>
+                            <i class="bi bi-exclamation-triangle fs-1 text-warning mb-3"></i>
+                            <p class="mb-0">No speed data available</p>
+                            <small class="text-body-secondary">Data will appear when detections are made</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6 mb-3">
+        <div class="card h-100">
+            <div class="card-header bg-transparent">
+                <h6 class="mb-0 fw-semibold">Direction Analysis</h6>
+            </div>
+            <div class="card-body p-3">
+                <div class="chart-container position-relative">
+                    <div id="directionChartLoading" class="chart-loading d-flex align-items-center justify-content-center" style="height: 280px;">
+                        <div class="text-center">
+                            <div class="spinner-border text-primary mb-2" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="text-body-secondary small">Loading chart data...</p>
+                        </div>
+                    </div>
+                    <canvas id="directionChart" class="chart-canvas" style="display: none; max-height: 280px;"></canvas>
+                    <div id="directionChartError" class="chart-error text-center text-body-secondary" style="display: none;">
+                        <div>
+                            <i class="bi bi-pie-chart fs-1 text-info mb-3"></i>
+                            <p class="mb-0">No direction data available</p>
+                            <small class="text-body-secondary">Data will appear when detections are made</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+  <!-- Live Camera Panel -->
+  <div class="col-lg-6 mb-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>Live Camera Feed</strong>
+      </div>
+      <div class="card-body p-2 d-flex justify-content-center align-items-center" style="height: 400px;">
+        <img src="/camera_feed" class="img-fluid rounded"
+             style="width:100%; height:100%; object-fit:cover;" />
+      </div>
+      <div class="card-footer text-center small">
+        Source: <strong>Camera Stream</strong>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3D Heatmap Panel -->
+  <div class="col-lg-6 mb-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>3D Heatmap</strong>
+        {% if is_admin %}
+        <button class="btn btn-sm btn-outline-success" onclick="triggerManualSnapshot()">Manual Snapshot</button>
+        {% endif %}
+      </div>
+      <div class="card-body p-2 d-flex justify-content-center align-items-center" style="height: 400px;">
+        <img src="/heatmap_feed" class="img-fluid rounded"
+             style="width:100%; height:100%; object-fit:cover;" />
+      </div>
+      <div class="card-footer text-center small">
+        Source: <strong>Radar Visualization</strong>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function triggerManualSnapshot() {
+  if (!confirm("Capture a snapshot now?")) return;
+
+  fetch('/manual_snapshot', { method: 'POST' })
+    .then(res => res.json())
+    .then(data => {
+      alert(data.message || 'Snapshot taken.');
+      location.reload();
+    })
+    .catch(err => {
+      alert('Failed to capture snapshot.');
+      console.error(err);
+    });
+}
+</script>
+
+<!-- Recent Detections -->
+{% if snapshots %}
+    <div class="row">
+        {% for snap in snapshots %}
+        <div class="col-lg-6 mb-3">
+            <div class="card h-100">
+                <div class="row g-0 h-100">
+                    <div class="col-4">
+                        {% if snap.image %}
+                            <img src="/snapshots/{{ snap.image }}" 
+                                 class="img-fluid h-100 w-100" 
+                                 style="object-fit: cover; cursor: pointer; border-radius: 16px 0 0 16px;" 
+                                 alt="Detection"
+                                 onclick="showImageModal('{{ snap.image }}', '{{ snap.label }}')">
+                        {% else %}
+                            <div class="d-flex align-items-center justify-content-center h-100" 
+                                style="background-color: var(--card-bg); border-radius: 16px 0 0 16px;">
+                                <span class="text-body-secondary small">No Image</span>
+                            </div>
+                        {% endif %}
+                    </div>
+                    <div class="col-8">
+                        <div class="card-body p-3 h-100 d-flex flex-column">
+                            <div class="mb-2">
+                                <span class="badge bg-{{ 'danger' if snap.speed > 30 else 'warning' if snap.speed > 20 else 'success' }}">
+                                    {{ snap.type }}
+                                </span>
+                                {% if snap.confidence %}
+                                <span class="badge bg-secondary ms-1">{{ (snap.confidence * 100)|round(1) }}%</span>
+                                {% endif %}
+                            </div>
+                            <div class="small flex-grow-1">
+                            <div class="row g-1">
+                                <div class="col-12"><strong>Object ID:</strong> {{ snap.object_id or "N/A" }}</div>
+                                <div class="col-6"><strong>Speed:</strong> {{ snap.speed }} km/h</div>
+                                <div class="col-6"><strong>Distance:</strong> {{ snap.distance }} m</div>
+                                <div class="col-6"><strong>Direction:</strong> {{ snap.direction or "N/A" }}</div>
+                                <div class="col-6"><strong>Motion:</strong> {{ snap.motion_state }}</div>
+                                <div class="col-12"><strong>Snapshot Type:</strong> {{ snap.snapshot_type.upper() if snap.snapshot_type else "AUTO" }}</div>
+                                <div class="col-12">
+                                <strong>Time:</strong>
+                                {{ snap.datetime.strftime("%H:%M:%S") if snap.datetime and snap.datetime.__class__.__name__ == "datetime" else snap.datetime or "N/A" }}
+                                </div>
+                            </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+{% else %}
+    <div class="card">
+        <div class="card-body text-center py-5">
+            <div class="display-6 text-body-secondary mb-3">📡</div>
+            <h5 class="text-body-secondary">No Recent Detections</h5>
+            <p class="text-body-secondary">System is monitoring... New detections will appear here.</p>
+        </div>
+    </div>
+{% endif %}
+
+<!-- Quick Actions -->
+<div class="row mt-5">
+    <div class="col-md-4 mb-3">
+        <a href="/gallery" class="btn btn-primary btn-lg w-100 py-3">
+            <div class="fw-semibold">View Gallery</div>
+            <small class="d-block opacity-75">Browse all captures</small>
+        </a>
+    </div>
+    <div class="col-md-4 mb-3">
+        <a href="/export" class="btn btn-primary btn-lg w-100 py-3">
+            <div class="fw-semibold">Export Data</div>
+            <small class="d-block opacity-75">Download reports</small>
+        </a>
+    </div>
+    <div class="col-md-4 mb-3">
+        {% if is_admin %}
+            <a href="/control" class="btn btn-primary btn-lg w-100 py-3">
+                <div class="fw-semibold">System Control</div>
+                <small class="d-block opacity-75">Admin settings</small>
+            </a>
+        {% else %}
+            <button class="btn btn-secondary btn-lg w-100 py-3" disabled>
+                <div class="fw-semibold">Admin Only</div>
+                <small class="d-block opacity-75">Restricted access</small>
+            </button>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Image Modal -->
+<div class="modal fade" id="imageModal" tabindex="-1" aria-labelledby="imageModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="imageModalLabel">Detection Image</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body text-center p-0">
+                <img id="modalImage" class="img-fluid w-100" alt="Detection" style="border-radius: 0 0 8px 8px;">
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Dashboard Chart Management
+class DashboardCharts {
+    constructor() {
+        this.speedChart = null;
+        this.directionChart = null;
+        this.chartData = null;
+        this.maxRetries = 3;
+        this.retryCount = 0;
+        this.init();
+    }
+
+    init() {
+        // Ensure Chart.js is loaded
+        if (typeof Chart === 'undefined') {
+            console.error('Chart.js is not loaded');
+            this.showError('speed');
+            this.showError('direction');
+            return;
+        }
+
+        // Set Chart.js defaults
+        Chart.defaults.font.family = "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif";
+        Chart.defaults.color = '#6c757d';
+        Chart.defaults.responsive = true;
+        Chart.defaults.maintainAspectRatio = false;
+
+        this.loadChartData();
+    }
+
+    async loadChartData() {
+        try {
+            console.log('Loading chart data...');
+            
+            const response = await fetch('/api/charts', {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json',
+                    'Cache-Control': 'no-cache'
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            console.log('Chart data received:', data);
+            
+            this.chartData = data;
+            this.renderCharts();
+            
+        } catch (error) {
+            console.error('Error loading chart data:', error);
+            this.retryCount++;
+            
+            if (this.retryCount < this.maxRetries) {
+                console.log(`Retrying... (${this.retryCount}/${this.maxRetries})`);
+                setTimeout(() => this.loadChartData(), 2000);
+            } else {
+                this.showError('speed');
+                this.showError('direction');
+            }
+        }
+    }
+
+    renderViolationHourChart() {
+        const canvas = document.getElementById('violationHourChart');
+        if (!canvas || !this.chartData || !this.chartData.violations_per_hour) return;
+
+        const ctx = canvas.getContext('2d');
+        if (this.violationHourChart) this.violationHourChart.destroy();
+
+        this.violationHourChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: this.chartData.violations_per_hour.labels,
+                datasets: [{
+                    label: 'Violations',
+                    data: this.chartData.violations_per_hour.data,
+                    backgroundColor: 'rgba(255, 99, 132, 0.3)',
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return `Count: ${context.parsed.y}`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: 'Violation Count' }
+                    },
+                    x: {
+                        title: { display: true, text: 'Hour of Day' }
+                    }
+                }
+            }
+        });
+    }
+
+    renderCharts() {
+        try { this.renderViolationHourChart(); } catch (e) { console.error("ViolationHour chart error:", e); }
+        try { this.renderSpeedChart(); } catch (e) { console.error("Speed chart error:", e); }
+        try { this.renderDirectionChart(); } catch (e) { console.error("Direction chart error:", e); }
+
+        const speedLoading = document.getElementById('speedChartLoading');
+        const directionLoading = document.getElementById('directionChartLoading');
+        const speedCanvas = document.getElementById('speedChart');
+        const directionCanvas = document.getElementById('directionChart');
+
+        if (speedCanvas) speedCanvas.style.display = 'block';
+        if (directionCanvas) directionCanvas.style.display = 'block';
+        if (speedLoading) {
+            speedLoading.style.display = 'none';
+            speedLoading.classList.add('d-none'); // Bootstrap force hide
+        }
+        if (directionLoading) {
+            directionLoading.style.display = 'none';
+            directionLoading.classList.add('d-none');
+        }
+
+        this.updateLastUpdate();
+    }
+
+    renderSpeedChart() {
+        const canvas = document.getElementById('speedChart');
+        const loading = document.getElementById('speedChartLoading');
+        const error = document.getElementById('speedChartError');
+
+        if (!canvas) {
+            console.error('Speed chart canvas not found');
+            return;
+        }
+
+        try {
+            // Destroy existing chart
+            if (this.speedChart) {
+                this.speedChart.destroy();
+                this.speedChart = null;
+            }
+
+            // Check for valid data
+            const hasValidData = this.chartData && 
+                this.chartData.speed_histogram && 
+                this.chartData.speed_histogram.labels && 
+                this.chartData.speed_histogram.data &&
+                this.chartData.speed_histogram.data.length > 0 &&
+                this.chartData.speed_histogram.data.some(val => val > 0);
+
+            if (!hasValidData) {
+                // Show error state, hide loading and canvas
+                if (loading) loading.style.display = 'none';
+                if (canvas) canvas.style.display = 'none';
+                if (error) error.style.display = 'flex';
+                return;
+            }
+
+            // Show canvas, hide loading and error
+            if (loading) loading.style.display = 'none';
+            if (error) error.style.display = 'none';
+            canvas.style.display = 'block';
+
+            const ctx = canvas.getContext('2d');
+            this.speedChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: this.chartData.speed_histogram.labels,
+                    datasets: [{
+                        label: 'Detections',
+                        data: this.chartData.speed_histogram.data,
+                        backgroundColor: 'rgba(102, 126, 234, 0.8)',
+                        borderColor: 'rgba(102, 126, 234, 1)',
+                        borderWidth: 1,
+                        borderRadius: 6,
+                        borderSkipped: false,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    },
+                    plugins: {
+                        legend: { 
+                            display: false 
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(0,0,0,0.8)',
+                            titleColor: '#fff',
+                            bodyColor: '#fff',
+                            cornerRadius: 8,
+                            callbacks: {
+                                title: function(context) {
+                                    return `Speed: ${context[0].label}`;
+                                },
+                                label: function(context) {
+                                    return `Count: ${context.parsed.y}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: { 
+                                display: true, 
+                                text: 'Number of Detections',
+                                font: { size: 12, weight: '500' }
+                            },
+                            grid: {
+                                color: 'rgba(0,0,0,0.1)',
+                                drawBorder: false
+                            },
+                            ticks: {
+                                stepSize: 1
+                            }
+                        },
+                        x: {
+                            title: { 
+                                display: true, 
+                                text: 'Speed Range (km/h)',
+                                font: { size: 12, weight: '500' }
+                            },
+                            grid: {
+                                display: false
+                            }
+                        }
+                    },
+                    animation: {
+                        duration: 1000,
+                        easing: 'easeOutQuart'
+                    }
+                }
+            });
+
+        } catch (error) {
+            console.error('Error rendering speed chart:', error);
+            // Show error state on exception
+            if (loading) loading.style.display = 'none';
+            if (canvas) canvas.style.display = 'none';
+            if (error) error.style.display = 'flex';
+        }
+    }
+
+    renderDirectionChart() {
+        const canvas = document.getElementById('directionChart');
+        const loading = document.getElementById('directionChartLoading');
+        const error = document.getElementById('directionChartError');
+
+        if (!canvas) {
+            console.error('Direction chart canvas not found');
+            return;
+        }
+
+        try {
+            // Destroy existing chart
+            if (this.directionChart) {
+                this.directionChart.destroy();
+                this.directionChart = null;
+            }
+
+            // Check for valid data
+            const hasValidData = this.chartData && 
+                this.chartData.direction_breakdown && 
+                this.chartData.direction_breakdown.labels && 
+                this.chartData.direction_breakdown.data &&
+                this.chartData.direction_breakdown.data.length > 0 &&
+                this.chartData.direction_breakdown.data.some(val => val > 0);
+
+            if (!hasValidData) {
+                // Show error state, hide loading and canvas
+                if (loading) loading.style.display = 'none';
+                if (canvas) canvas.style.display = 'none';
+                if (error) error.style.display = 'flex';
+                return;
+            }
+
+            // Show canvas, hide loading and error
+            if (loading) loading.style.display = 'none';
+            if (error) error.style.display = 'none';
+            canvas.style.display = 'block';
+
+            const ctx = canvas.getContext('2d');
+            this.directionChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: this.chartData.direction_breakdown.labels.map(l => 
+                        l.charAt(0).toUpperCase() + l.slice(1)
+                    ),
+                    datasets: [{
+                        label: 'Direction Count',
+                        data: this.chartData.direction_breakdown.data,
+                        backgroundColor: [
+                            '#27ae60',  // Approaching (Green)
+                            '#e74c3c',  // Departing (Red)
+                            '#f1c40f',  // Stationary (Yellow)
+                            '#8e44ad',  // Left (Purple)
+                            '#3498db',  // Right (Blue)
+                            '#95a5a6'   // Unknown (Grey)
+                        ],
+                        borderWidth: 3,
+                        borderColor: '#fff',
+                        hoverOffset: 8
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        intersect: false
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                padding: 20,
+                                font: { size: 11 },
+                                usePointStyle: true,
+                                pointStyle: 'circle'
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(0,0,0,0.8)',
+                            titleColor: '#fff',
+                            bodyColor: '#fff',
+                            cornerRadius: 8,
+                            callbacks: {
+                                label: function(context) {
+                                    const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                    const percentage = ((context.parsed / total) * 100).toFixed(1);
+                                    return `${context.label}: ${context.parsed} (${percentage}%)`;
+                                }
+                            }
+                        }
+                    },
+                    animation: {
+                        animateRotate: true,
+                        duration: 1000,
+                        easing: 'easeOutQuart'
+                    }
+                }
+            });
+
+        } catch (error) {
+            console.error('Error rendering direction chart:', error);
+            // Show error state on exception
+            if (loading) loading.style.display = 'none';
+            if (canvas) canvas.style.display = 'none';
+            if (error) error.style.display = 'flex';
+        }
+    }
+
+    showError(chartType) {
+        const loading = document.getElementById(`${chartType}ChartLoading`);
+        const canvas = document.getElementById(`${chartType}Chart`);
+        const error = document.getElementById(`${chartType}ChartError`);
+
+        if (loading) loading.style.display = 'none';
+        if (canvas) canvas.style.display = 'none';
+        if (error) error.style.display = 'flex';
+    }
+
+    updateLastUpdate() {
+        const lastUpdateEl = document.getElementById('lastUpdate');
+        if (lastUpdateEl) {
+            const now = new Date();
+            lastUpdateEl.textContent = now.toLocaleTimeString();
+        }
+    }
+
+    // Public method to refresh charts
+    refresh() {
+        this.retryCount = 0;
+        this.loadChartData();
+    }
+
+    // Handle window resize
+    handleResize() {
+        if (this.speedChart) this.speedChart.resize();
+        if (this.directionChart) this.directionChart.resize();
+    }
+}
+
+// Global functions for image modal
+function showImageModal(imagePath, label) {
+    try {
+        console.log('Opening modal for:', imagePath);
+        
+        const modal = document.getElementById('imageModal');
+        const modalImage = document.getElementById('modalImage');
+        const modalTitle = document.getElementById('imageModalLabel');
+        
+        if (!modal || !modalImage || !modalTitle) {
+            console.error('Modal elements not found');
+            return;
+        }
+
+        // Clear any existing modal state
+        const existingModal = bootstrap.Modal.getInstance(modal);
+        if (existingModal) {
+            existingModal.hide();
+        }
+
+        // Set image source with error handling
+        modalImage.onload = function() {
+            console.log('Image loaded successfully');
+        };
+        
+        modalImage.onerror = function() {
+            console.error('Failed to load image:', imagePath);
+            modalImage.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZGRkIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzk5OSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPkltYWdlIG5vdCBmb3VuZDwvdGV4dD48L3N2Zz4=';
+        };
+
+        // Set modal content
+        modalImage.src = '/snapshots/' + imagePath;
+        modalImage.alt = label || 'Detection Image';
+        modalTitle.textContent = label || 'Detection Image';
+        
+        // Show modal with timeout protection
+        setTimeout(() => {
+            const bsModal = new bootstrap.Modal(modal, {
+                backdrop: true,
+                keyboard: true,
+                focus: true
+            });
+            bsModal.show();
+        }, 100);
+        
+    } catch (error) {
+        console.error('Error opening modal:', error);
+        alert('Unable to open image. Please try again.');
+    }
+}
+
+// Initialize dashboard when DOM is loaded
+let dashboardCharts = null;
+
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('Dashboard initializing...');
+    function waitForChartLib(attempts = 5) {
+        if (typeof Chart !== 'undefined') {
+            console.log("Chart.js ready");
+            dashboardCharts = new DashboardCharts();
+        } else if (attempts > 0) {
+            console.warn("Chart.js not ready yet. Retrying...");
+            setTimeout(() => waitForChartLib(attempts - 1), 200);
+        } else {
+            console.error("Chart.js failed to load.");
+        }
+    }
+    waitForChartLib();
+});
+
+// Handle window resize
+window.addEventListener('resize', function() {
+    if (dashboardCharts) {
+        dashboardCharts.handleResize();
+    }
+});
+
+// Auto-refresh every 30 seconds
+setInterval(() => {
+    if (dashboardCharts) {
+        console.log('Auto-refreshing charts...');
+        dashboardCharts.refresh();
+    }
+}, 30000);
+
+// Expose refresh function globally for manual refresh
+window.refreshDashboard = function() {
+    if (dashboardCharts) {
+        dashboardCharts.refresh();
+    }
+};
+</script>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    const selector = document.getElementById("violationDaySelector");
+    if (selector) {
+        selector.addEventListener("change", function () {
+            const selectedDays = parseInt(this.value);
+            if (dashboardCharts && typeof dashboardCharts.loadChartData === "function") {
+                fetch(`/api/charts?days=${selectedDays}`)
+                    .then(res => res.json())
+                    .then(data => {
+                        dashboardCharts.chartData = data;
+                        dashboardCharts.renderViolationHourChart();
+                    })
+                    .catch(err => console.error("Violation chart reload failed:", err));
+            }
+        });
+    }
+});
+</script>
+
+{% endblock %}

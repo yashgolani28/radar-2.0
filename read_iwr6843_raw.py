@@ -23,9 +23,14 @@ print("[INFO] Started reading radar data... Press Ctrl+C to stop.")
 
 try:
     while True:
-       targets = radar.get_targets()
-       if targets:
-        classified = classifier.classify_objects(targets)
+        frame = radar.parser.readAndParseUart()
+        targets = frame.get("trackData", [])
+        heatmap = frame.get("range_doppler_heatmap", [])
+        range_profile = frame.get("range_profile", []) 
+        noise_profile = frame.get("noise_profile", [])
+
+        if targets:
+            classified = classifier.classify_objects(targets)
         sock.sendto(json.dumps(classified).encode(), DEST)
         print(f"\n[Frame @ {time.strftime('%H:%M:%S')}] {len(classified)} target(s)")
         for obj in classified:

@@ -42,9 +42,22 @@ class ObjectClassifier:
         return model, scaler
 
     def _extract_features(self, obj):
+        # Compute safe stats
+        def safe_stats(arr):
+            if not arr:
+                return [0.0, 0.0]
+            try:
+                arr = [float(x) for x in arr if x is not None]
+                return [np.mean(arr), np.std(arr)]
+            except:
+                return [0.0, 0.0]
+
+        range_feats = safe_stats(obj.get("range_profile", []))
+        noise_feats = safe_stats(obj.get("noise_profile", []))
+
         return [
             obj.get("speed_kmh", 0.0),
-            obj.get("radar_distance", 0.0),
+            obj.get("radar_distance", obj.get("distance", 0.0)),
             abs(obj.get("velocity", 0.0)),
             obj.get("signal_level", 0.0),
             obj.get("doppler_frequency", 0.0),
@@ -55,7 +68,12 @@ class ObjectClassifier:
             obj.get("velY", 0.0),
             obj.get("velZ", 0.0),
             obj.get("snr", 0.0),
-            obj.get("noise", 0.0)
+            obj.get("noise", 0.0),
+            obj.get("accX", 0.0),
+            obj.get("accY", 0.0),
+            obj.get("accZ", 0.0),
+            *range_feats,
+            *noise_feats
         ]
 
     def classify_objects(self, objects):
@@ -66,7 +84,9 @@ class ObjectClassifier:
 
             df = pd.DataFrame([features], columns=[
                 "speed_kmh", "radar_distance", "velocity", "signal_level", "doppler_frequency",
-                "x", "y", "z", "velX", "velY", "velZ", "snr", "noise"
+                "x", "y", "z", "velX", "velY", "velZ", "snr", "noise",
+                "accX", "accY", "accZ",
+                "range_mean", "range_std", "noise_mean", "noise_std"
             ])
             features_scaled = self.scaler.transform(df)
             probabilities = self.model.predict_proba(features_scaled)[0]
@@ -88,10 +108,6 @@ class ObjectClassifier:
                 'confidence': round(confidence, 3),
                 'raw_probabilities': dict(zip(classes, probabilities.round(3)))
             })
-            
-            # Assign unique object ID if not present
-            if "object_id" not in obj:
-                obj["object_id"] = f"obj_{int(obj.get('id', 0))}"
 
             # Add a composite score (confidence × SNR)
             obj["score"] = round(obj["confidence"] * obj.get("snr", 1.0), 2)
@@ -114,9 +130,9 @@ class ObjectClassifier:
             if abs(vel_y) < 0.05 and abs(vel_x) < 0.05:
                 obj["direction"] = "STATIC"
             elif abs(vel_y) >= abs(vel_x):
-                obj["direction"] = "TOWARDS" if vel_y > 0 else "AWAY"
+                obj["direction"] = "AWAY" if vel_y > 0 else "TOWARDS"
             else:
-                obj["direction"] = "RIGHT" if vel_x > 0 else "LEFT"
+                obj["direction"] = "LEFT" if vel_x > 0 else "RIGHT"
 
             classified.append(obj)
 

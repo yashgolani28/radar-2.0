@@ -1,0 +1,614 @@
+{% extends "base.html" %}
+{% block title %}System Control Panel{% endblock %}
+{% block content %}
+
+<!-- Header Section -->
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2 class="fw-bold" style="color: var(--text-color);">System Control Panel</h2>
+    </div>
+    <span class="badge bg-warning fs-6 px-3 py-2">Admin Access</span>
+</div>
+
+<!-- Alert Messages -->
+{% if message %}
+<div class="alert alert-info alert-dismissible fade show mb-4" role="alert">
+    <i class="fas fa-info-circle me-2"></i>
+    {{ message }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+</div>
+{% endif %}
+
+<!-- System Status Dashboard -->
+<div class="row g-4 mb-5">
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-header" style="background-color: var(--section-bg); color: var(--text-color);">
+                <h5 class="mb-0"><i class="fas fa-tachometer-alt me-2"></i>System Status</h5>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-md-4">
+                        <div class="p-3 border rounded" style="background-color: var(--card-bg); color: var(--text-color);">
+                            <i class="fas fa-radar fa-2x mb-2 text-primary"></i>
+                            <h6 class="fw-bold">Radar</h6>
+                            <span class="badge {{ 'bg-success' if radar_status else 'bg-danger' }} fs-6 px-3 py-2">
+                                {{ 'Connected' if radar_status else 'Disconnected' }}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="p-3 border rounded" style="background-color: var(--card-bg); color: var(--text-color);">
+                            <i class="fas fa-camera fa-2x mb-2 text-info"></i>
+                            <h6 class="fw-bold">Camera</h6>
+                            <span class="badge {{ 'bg-success' if camera_status else 'bg-danger' }} fs-6 px-3 py-2">
+                                {{ 'Connected' if camera_status else 'Disconnected' }}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="p-3 border rounded" style="background-color: var(--card-bg); color: var(--text-color);">
+                            <i class="fas fa-hdd fa-2x mb-2 text-warning"></i>
+                            <h6 class="fw-bold">Storage</h6>
+                            <span class="badge bg-info fs-6 px-3 py-2">{{ disk_free }} GB Free</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Main Configuration Form -->
+<div class="row g-4 mb-5">
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-header" style="background-color: var(--section-bg); color: var(--text-color);">
+                <h5 class="mb-0"><i class="fas fa-cogs me-2"></i>System Configuration</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" novalidate>
+                    
+                    <!-- Basic Settings -->
+                    <div class="row g-4 mb-4">
+                        <div class="col-md-6">
+                            <div class="card h-100">
+                                <div class="card-header" style="background-color: var(--card-header-bg);">
+                                    <h6 class="mb-0 text-primary">Detection Settings</h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label for="cooldown_seconds" class="form-label fw-bold">
+                                            <i class="fas fa-clock me-1"></i>Detection Cooldown (seconds)
+                                        </label>
+                                        <input type="number" step="0.1" min="0" name="cooldown_seconds" 
+                                               class="form-control" value="{{ config.cooldown_seconds }}" required>
+                                        <div class="form-text">Time between consecutive detections</div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="annotation_conf_threshold" class="form-label fw-bold">
+                                            <i class="fas fa-percentage me-1"></i>Annotation Confidence Threshold
+                                        </label>
+                                        <input type="number" step="0.01" min="0.1" max="1.0" 
+                                               name="annotation_conf_threshold" class="form-control" 
+                                               value="{{ config.annotation_conf_threshold }}">
+                                        <div class="form-text">Minimum confidence level for annotations</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <div class="card h-100">
+                                <div class="card-header" style="background-color: var(--card-header-bg);">
+                                    <h6 class="mb-0 text-primary">Data Management</h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label for="retention_days" class="form-label fw-bold">
+                                            <i class="fas fa-calendar-alt me-1"></i>Data Retention (days)
+                                        </label>
+                                        <input type="number" min="1" name="retention_days" 
+                                               class="form-control" value="{{ config.retention_days }}" required>
+                                        <div class="form-text">Number of days to keep detection data</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Camera Configuration -->
+                    <div class="card mb-4">
+                        <div class="card-header d-flex justify-content-between align-items-center" style="background-color: var(--card-header-bg);"> 
+                            <h6 class="mb-0 text-primary">
+                                <i class="fas fa-video me-2"></i>Camera Configuration
+                            </h6>
+                            <button class="btn btn-sm btn-outline-secondary" type="button" 
+                                    data-bs-toggle="collapse" data-bs-target="#cameraSettings">
+                                <i class="fas fa-chevron-down me-1"></i>Toggle Settings
+                            </button>
+                        </div>
+                        <div class="collapse show" id="cameraSettings">
+                            <div class="card-body">
+                                <div class="row row-cols-1 row-cols-lg-2 g-3">
+                                    {% for cam in config.cameras %}
+                                    {% set idx = loop.index0 %}
+                                    <div class="col camera-entry">
+                                        <div class="card-header position-relative border rounded p-3" style="background-color: var(--card-header-bg);"> 
+                                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                                <h6 class="fw-bold mb-0">
+                                                    <i class="fas fa-camera me-1"></i>Camera {{ idx + 1 }}
+                                                </h6>
+                                                <button type="button" class="btn btn-sm btn-outline-danger" 
+                                                        onclick="removeCamera(this)">
+                                                    <i class="fas fa-trash me-1"></i>Remove
+                                                </button>
+                                            </div>
+                                            <input type="hidden" name="camera_index" value="{{ idx }}">
+                                            
+                                            <div class="mb-2">
+                                                <label class="form-label fw-bold">Stream URL</label>
+                                                <input type="text" class="form-control" 
+                                                       name="camera_url_{{ idx }}" value="{{ cam.url }}" required>
+                                            </div>
+                                            <div class="row">
+                                                <div class="col-md-6">
+                                                    <div class="mb-2">
+                                                        <label class="form-label fw-bold">Username</label>
+                                                        <input type="text" class="form-control" 
+                                                               name="camera_username_{{ idx }}" value="{{ cam.username }}">
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <div class="mb-2">
+                                                        <label class="form-label fw-bold">Password</label>
+                                                        <input type="password" class="form-control" 
+                                                               name="camera_password_{{ idx }}" value="{{ cam.password }}">
+                                                    </div>
+                                                </div>
+                                                <div class="mb-2">
+                                                  <label class="form-label fw-bold">Stream Type</label>
+                                                  <select class="form-select" name="camera_stream_type_{{ idx }}">
+                                                    <option value="mjpeg" {% if cam.stream_type == 'mjpeg' %}selected{% endif %}>MJPEG Stream</option>
+                                                    <option value="snapshot" {% if cam.stream_type == 'snapshot' %}selected{% endif %}>Snapshot Only</option>
+                                                    <option value="rtsp" {% if cam.stream_type == 'rtsp' %}selected{% endif %}>RTSP Stream</option>
+                                                  </select>
+                                              </div>
+                                            </div>
+                                            <div class="form-check form-switch mt-2">
+                                                <input class="form-check-input" type="radio" name="selected_camera" 
+                                                       value="{{ idx }}" id="selectCam{{ idx }}"
+                                                       {% if config.selected_camera == idx %}checked{% endif %}>
+                                                <label class="form-check-label fw-bold" for="selectCam{{ idx }}">
+                                                    Active Camera
+                                                </label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                <div id="camera-container"></div>
+                                <div class="d-grid mt-3">
+                                    <button type="button" class="btn btn-outline-primary" onclick="addCameraField()">
+                                        <i class="fas fa-plus me-2"></i>Add New Camera
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Speed Limits Configuration -->
+                    <div class="card mb-4">
+                        <div class="card-header" style="background-color: var(--card-header-bg);">
+                            <h6 class="mb-0 text-primary">
+                                <i class="fas fa-tachometer-alt me-2"></i>Dynamic Speed Limits
+                            </h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="row g-3">
+                                {% for key, val in config.dynamic_speed_limits.items() %}
+                                <div class="col-md-3">
+                                    <label class="form-label fw-bold text-uppercase">
+                                        {% if key == 'default' %}
+                                            <i class="fas fa-car me-1"></i>Default Type
+                                        {% else %}
+                                            <i class="fas fa-car me-1"></i>{{ key }}
+                                        {% endif %}
+                                    </label>
+                                    <div class="input-group">
+                                        <input type="number" step="0.1" name="speed_limit_{{ key }}" 
+                                               value="{{ val }}" class="form-control">
+                                        <span class="input-group-text" style="background-color: var(--card-bg); color: var(--text-color); border-color: var(--border-color);">
+                                        km/h
+                                        </span>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Form Actions -->
+                    <div class="d-flex justify-content-center gap-3">
+                        <button type="submit" name="action" value="update_config" 
+                                class="btn btn-primary btn-lg px-4">
+                            <i class="fas fa-save me-2"></i>Save Configuration
+                        </button>
+                        <button type="button" class="btn btn-primary btn-lg px-4" onclick="reloadConfig()">
+                            <i class="fas fa-sync-alt me-2"></i>Reload Live Configuration
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<!-- Model Management Panel -->
+<div class="card shadow-sm mb-5">
+  <div class="card-header d-flex justify-content-between align-items-center" style="background-color: var(--section-bg); color: var(--text-color);">
+    <h5 class="mb-0"><i class="fas fa-brain me-2"></i>Model Management</h5>
+    <span class="small">Keep your detection model updated</span>
+  </div>
+  <div class="card-body">
+    <div class="row g-4">
+      <div class="col-md-6">
+        <div class="p-3 border rounded h-100 d-flex flex-column justify-content-between" style="background-color: var(--card-bg);">
+          <div>
+            <h6 class="fw-bold text-success mb-2">
+              <i class="fas fa-trophy me-2"></i>Model Accuracy:
+              <span id="modelAccuracy">{{ model_info.accuracy|round(2) if model_info else '--' }}%</span>
+              {% if model_info and model_info.change is not none %}
+                {% if model_info.change > 0 %}<i class="fas fa-arrow-up text-success"></i>{% elif model_info.change < 0 %}<i class="fas fa-arrow-down text-danger"></i>{% endif %}
+              {% endif %}
+            </h6>
+            <p class="mb-1">Last Updated: <strong>{{ model_info.updated_at if model_info else '--' }}</strong></p>
+            <p class="mb-0">Method: <code>{{ model_info.method if model_info else '--' }}</code></p>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="d-flex flex-column gap-3">
+          <form id="uploadModelForm" enctype="multipart/form-data" class="d-flex flex-column gap-2">
+            <label class="form-label fw-bold mb-1" for="modelUploadInput">
+              <i class="fas fa-upload me-2 text-center"></i> Tip: Upload Trained Model (.pkl)
+            </label>
+            <input type="file" id="modelUploadInput" name="model_file" accept=".pkl" class="form-control" required>
+            <button type="submit" class="btn btn-outline-primary">
+              <i class="fas fa-cloud-upload-alt me-2"></i>Upload & Replace
+            </button>
+          </form>
+          <button class="btn btn-outline-success w-100" id="retrainModelBtn">
+            <i class="fas fa-sync-alt me-2"></i>Retrain Model from DB
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.getElementById('retrainModelBtn').addEventListener('click', () => {
+  if (confirm("Retrain model using all radar data from DB?")) {
+    fetch("/retrain_model", { method: "POST" })
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === "ok") {
+          alert("Model retrained successfully.");
+          location.reload();
+        } else {
+          alert("Retrain failed: " + (data.error || "unknown"));
+        }
+      })
+      .catch(err => alert("Retrain error: " + err));
+  }
+});
+
+document.getElementById('uploadModelForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const formData = new FormData(e.target);
+  fetch("/upload_model", {
+    method: "POST",
+    body: formData
+  })
+    .then(res => res.json())
+    .then(data => {
+      if (data.status === "ok") {
+        alert("Model uploaded successfully.");
+        location.reload();
+      } else {
+        alert("Upload failed: " + (data.error || "unknown"));
+      }
+    })
+    .catch(err => alert("Upload error: " + err));
+});
+</script>
+
+<!-- System Tools and Database Management -->
+<div class="row g-4 mb-5">
+    <div class="col-lg-6">
+        <div class="card shadow-sm h-100">
+            <div class="card-header" style="background-color: var(--section-bg); color: var(--text-color);">
+                <h5 class="mb-0"><i class="fas fa-tools me-2"></i>System Tools</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" class="d-grid gap-3">
+                    <button type="submit" name="action" value="test_camera" 
+                            class="btn btn-outline-primary btn-lg">
+                        <i class="fas fa-camera me-2"></i>Test Camera Connection
+                    </button>
+                    <button type="submit" name="action" value="test_radar" 
+                            class="btn btn-outline-secondary btn-lg">
+                        <i class="fas fa-radar me-2"></i>Test Radar Connection
+                    </button>
+                    <button type="submit" name="action" value="backup_db" 
+                            class="btn btn-outline-success btn-lg">
+                        <i class="fas fa-download me-2"></i>Download Database Backup
+                    </button>
+                    <button type="submit" name="action" value="cleanup_snapshots" 
+                            class="btn btn-outline-warning btn-lg"
+                            onclick="return confirm('Clean up old snapshots based on retention settings?')">
+                        <i class="fas fa-broom me-2"></i>Cleanup Old Snapshots
+                    </button>
+                    <button type="submit" name="action" value="clear_db" 
+                            class="btn btn-outline-danger btn-lg"
+                            onclick="return confirm('This will permanently delete ALL detection data. Continue?')">
+                        <i class="fas fa-trash-alt me-2"></i>Clear All Data
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-6">
+        <div class="card shadow-sm h-100">
+            <div class="card-header" style="background-color: var(--section-bg); color: var(--text-color);">
+                <h5 class="mb-0"><i class="fas fa-database me-2"></i>Database Management</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" enctype="multipart/form-data">
+                    <div class="mb-3">
+                        <label for="backup_file" class="form-label fw-bold">
+                            <i class="fas fa-file-upload me-1"></i>Select Backup File
+                        </label>
+                        <input type="file" id="backup_file" name="backup_file" 
+                               class="form-control form-control-lg" accept=".sql" required>
+                    </div>
+                    <br>
+                    <div class="d-grid">
+                        <button type="submit" name="action" value="restore_db" 
+                                class="btn btn-primary btn-lg"
+                                onclick="return confirm('This will replace the current database. Continue?')">
+                            <i class="fas fa-upload me-2"></i>Restore Database
+                        </button>
+                    </div>
+                    <br>
+                    <hr>
+                    <div class="text-center">Tip: Upload a valid PostgreSQL .sql backup file</div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Test Results -->
+{% if snapshot %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-header" style="background-color: var(--section-bg); color: var(--text-color);">
+                <h5 class="mb-0"><i class="fas fa-check-circle me-2"></i>Camera Test Result</h5>
+            </div>
+            <div class="card-body text-center">
+                <img src="{{ url_for('serve_snapshot', filename=snapshot) }}" 
+                     class="img-fluid rounded shadow-sm mb-3" 
+                     style="max-height: 400px;" 
+                     alt="Test Snapshot - {{ snapshot }}">
+                <p class="text-success fs-5 mb-0">
+                    <i class="fas fa-check-circle me-2"></i>Camera test successful!
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if message and "Radar test" in message %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-header {{ 'bg-success' if 'successful' in message else 'bg-danger' }} text-white">
+                <h5 class="mb-0"><i class="fas fa-satellite-dish me-2"></i>Radar Test Result</h5>
+            </div>
+            <div class="card-body text-center">
+                <p class="{{ 'text-success' if 'successful' in message else 'text-danger' }} fs-5 mb-0">
+                    <i class="fas {{ 'fa-check-circle' if 'successful' in message else 'fa-times-circle' }} me-2"></i>
+                    {{ message }}
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- System Information -->
+<div class="row">
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-header" style="background-color: var(--section-bg); color: var(--text-color);">
+                <h5 class="mb-0"><i class="fas fa-info-circle me-2"></i>System Information</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="card-header h-100" style="background-color: var(--card-header-bg);">
+                            <div class="card-body">
+                                <h6 class="text-primary fw-bold">
+                                    <i class="fas fa-cog me-2"></i>Current Configuration
+                                </h6>
+                                <ul class="list-unstyled mb-0">
+                                    <li><strong>Cooldown:</strong> {{ config.cooldown_seconds }}s</li>
+                                    <li><strong>Retention:</strong> {{ config.retention_days }} days</li>
+                                    <li><strong>Active Camera:</strong> Camera {{ config.selected_camera + 1 }}</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card-header h-100" style="background-color: var(--card-header-bg);">
+                            <div class="card-body">
+                                <h6 class="text-primary fw-bold">
+                                    <i class="fas fa-video me-2"></i>Available Cameras
+                                </h6>
+                                <ul class="list-unstyled mb-0">
+                                    {% for camera in config.cameras %}
+                                    <li><strong>Camera {{ loop.index }}:</strong> {{ camera }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let camIndex = {{ config.cameras | length }};
+
+function addCameraField() {
+    const container = document.getElementById("camera-container");
+    const div = document.createElement("div");
+    div.className = "col camera-entry";
+    div.innerHTML = `
+        <div class="card-header position-relative border rounded p-3" style="background-color: var(--card-header-bg);"> 
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h6 class="fw-bold mb-0">
+                    <i class="fas fa-camera me-1"></i>Camera ${camIndex + 1}
+                </h6>
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeCamera(this)">
+                    <i class="fas fa-trash me-1"></i>Remove
+                </button>
+            </div>
+            <div class="mb-2">
+                <label class="form-label fw-bold">Stream URL</label>
+                <input type="text" class="form-control" name="camera_url_${camIndex}" required>
+            </div>
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-2">
+                        <label class="form-label fw-bold">Username</label>
+                        <input type="text" class="form-control" name="camera_username_${camIndex}">
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-2">
+                        <label class="form-label fw-bold">Password</label>
+                        <input type="password" class="form-control" name="camera_password_${camIndex}">
+                    </div>
+                </div>
+                <div class="mb-2">
+                  <label class="form-label fw-bold">Stream Type</label>
+                  <select class="form-select" name="camera_stream_type_${camIndex}">
+                    <option value="mjpeg" selected>MJPEG Stream</option>
+                    <option value="snapshot">Snapshot Only</option>
+                    <option value="rtsp">RTSP Stream</option>
+                  </select>
+                </div>
+            </div>
+            <div class="form-check form-switch mt-2">
+                <input class="form-check-input" type="radio" name="selected_camera" value="${camIndex}" id="selectCam${camIndex}">
+                <label class="form-check-label fw-bold" for="selectCam${camIndex}">
+                    Active Camera
+                </label>
+            </div>
+        </div>
+    `;
+    container.appendChild(div);
+    camIndex++;
+}
+
+function removeCamera(btn) {
+    const entries = document.querySelectorAll(".camera-entry");
+    if (entries.length <= 1) {
+        alert("At least one camera must be configured.");
+        return;
+    }
+
+    const entry = btn.closest(".camera-entry");
+    const radio = entry.querySelector("input[type='radio']");
+    const isActive = radio && radio.checked;
+
+    entry.remove();
+
+    // If active camera was deleted, pick the first remaining one
+    if (isActive) {
+        const remaining = document.querySelectorAll(".camera-entry input[type='radio']");
+        if (remaining.length > 0) remaining[0].checked = true;
+    }
+}
+
+function reloadConfig() {
+    if (confirm("Reload configuration now?")) {
+        fetch("/api/reload_config", {
+            method: "POST",
+            headers: {
+                "X-Requested-With": "XMLHttpRequest",
+                "Content-Type": "application/json"
+            }
+        })
+        .then(resp => resp.json())
+        .then(data => {
+            if (data.status === "ok") {
+                alert("Config reload triggered successfully.");
+            } else {
+                alert("Reload failed: " + (data.error || "unknown error"));
+            }
+        })
+        .catch(err => {
+            console.error("Reload request failed", err);
+            alert("Reload failed. See console for details.");
+        });
+    }
+}
+
+// Auto-refresh status every 30 seconds
+let statusInterval = setInterval(() => {
+    fetch('/api/status')
+        .then(response => {
+            if (!response.ok) throw new Error('Status check failed');
+            return response.json();
+        })
+        .then(data => {
+            console.log('System status updated:', data);
+        })
+        .catch(error => {
+            console.log('Status check failed:', error);
+        });
+}, 30000);
+
+// Clear interval on page unload
+window.addEventListener('beforeunload', () => {
+    clearInterval(statusInterval);
+});
+
+// Form validation
+document.addEventListener('DOMContentLoaded', function() {
+    const forms = document.querySelectorAll('form');
+    forms.forEach(form => {
+        form.addEventListener('submit', function(event) {
+            if (!form.checkValidity()) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            form.classList.add('was-validated');
+        });
+    });
+});
+</script>
+{% endblock %}

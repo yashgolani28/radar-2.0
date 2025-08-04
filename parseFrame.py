@@ -59,19 +59,33 @@ def parseStandardFrame(frameData):
             outputDict['numDetectedPoints'], outputDict['pointCloud'] = parsePointCloudTLV(frameData[:tlvLength], tlvLength, outputDict['pointCloud'])
         # Range Profile
         elif (tlvType == MMWDEMO_OUTPUT_MSG_RANGE_PROFILE):
-            pass
+            try:
+                num_bins = int(tlvLength / 2)  # 2 bytes per bin
+                range_profile = struct.unpack(f"{num_bins}H", frameData[:tlvLength])
+                outputDict['range_profile'] = list(range_profile)
+            except Exception as e:
+                logger.warning(f"[Parse] Failed RANGE_PROFILE TLV: {e}")
         # Noise Profile
         elif (tlvType == MMWDEMO_OUTPUT_MSG_NOISE_PROFILE):
-            pass
+            try:
+                num_bins = int(tlvLength / 2)
+                noise_profile = struct.unpack(f"{num_bins}H", frameData[:tlvLength])
+                outputDict['noise_profile'] = list(noise_profile)
+            except Exception as e:
+                logger.warning(f"[Parse] Failed NOISE_PROFILE TLV: {e}")
+        # Range Doppler Heatmap
+        elif (tlvType == MMWDEMO_OUTPUT_MSG_RANGE_DOPPLER_HEAT_MAP):
+            try:
+                heatmap = np.frombuffer(frameData[:tlvLength], dtype=np.int16)
+                outputDict['range_doppler_heatmap'] = heatmap.tolist()
+            except Exception as e:
+                logger.warning(f"[Parse] Failed RANGE_DOPPLER_HEAT_MAP TLV: {e}")
         # Static Azimuth Heatmap
         elif (tlvType == MMWDEMO_OUTPUT_MSG_AZIMUT_STATIC_HEAT_MAP):
             pass
-        # Range Doppler Heatmap
-        elif (tlvType == MMWDEMO_OUTPUT_MSG_RANGE_DOPPLER_HEAT_MAP):
-            pass
         # Performance Statistics
         elif (tlvType == MMWDEMO_OUTPUT_MSG_STATS):
-            pass
+             outputDict['stats'] = parseStatsTLV(frameData[:tlvLength])
         # Side Info
         elif (tlvType == MMWDEMO_OUTPUT_MSG_DETECTED_POINTS_SIDE_INFO):
             outputDict['pointCloud'] = parseSideInfoTLV(frameData[:tlvLength], tlvLength, outputDict['pointCloud'])

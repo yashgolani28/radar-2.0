@@ -9,6 +9,7 @@ import atexit
 from datetime import datetime
 from collections import deque, defaultdict
 from threading import Thread
+import matplotlib.pyplot as plt
 import cv2
 import numpy as np
 import csv
@@ -26,6 +27,7 @@ from plotter import Live3DPlotter
 config = load_config()
 frame_buffer = deque(maxlen=6)
 speeding_buffer = defaultdict(lambda: deque(maxlen=5))
+acceleration_cache = defaultdict(lambda: deque(maxlen=5))  
 last_snapshot_ids = {}
 radar_csv_logger = IWR6843Logger()
 violations_csv = "radar-logs/violations.csv"
@@ -60,8 +62,6 @@ def log_violation_to_csv(obj, note="Snapshot Failed"):
             obj.get("speed_kmh", 0.0),
             obj.get("velocity", 0.0),
             obj.get("distance", 0.0),
-            obj.get("radar_distance", 0.0),
-            obj.get("visual_distance", 0.0),
             obj.get("direction", "unknown"),
             obj.get("signal_level", 0.0),
             obj.get("doppler_frequency", 0.0),
@@ -90,28 +90,37 @@ def main():
                 tracker.speed_limits_map = config.get("dynamic_speed_limits", {})
                 os.remove("reload_flag.txt")
 
-            targets = radar.get_targets()
+            frame = radar.get_targets()
+            targets = frame.get("trackData", [])
+            heatmap = frame.get("range_doppler_heatmap", [])
+
             if not targets:
                 time.sleep(0.1)
                 continue
+
+            plotter.update_heatmap(heatmap)
 
             now = time.time()
             for obj in targets:
                 obj["x"] = obj.get("posX", 0.0)
                 obj["y"] = obj.get("posY", 0.0)
                 obj["z"] = obj.get("posZ", 0.0)
-                obj["range"] = obj.get("radar_distance", obj.get("distance", 0.0))
+                obj["range"] = obj.get("distance", obj.get("distance", 0.0))
 
                 if "object_id" not in obj:
-                    now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    radar_id = int(obj.get("id", 0))
+                    date_str = datetime.now().strftime("%Y%m%d")
+                    radar_id = obj.get("id")
+                    try:
+                        radar_id = int(radar_id)
+                    except:
+                        radar_id = 0
                     obj_type = obj.get("type", "UNKNOWN").upper()
-                    obj["object_id"] = f"{obj_type}_{now_str}_{radar_id}"
+                    obj["object_id"] = f"{obj_type}_{date_str}_{radar_id}"
 
                 obj.update({
                     "timestamp": now,
                     "sensor": "IWR6843ISK",
-                    "radar_distance": obj.get("distance", 0.0),
+                    "distance": obj.get("distance", 0.0),
                     "velocity": obj.get("velocity", 0.0),
                     "speed_kmh": obj.get("speed_kmh", 0.0),
                     "doppler_frequency": obj.get("doppler_frequency", 0.0),
@@ -119,7 +128,6 @@ def main():
                     "direction": obj.get("direction", "unknown"),
                     "motion_state": obj.get("motion_state", "unknown"),
                     "confidence": obj.get("confidence", 1.0),
-                    "visual_distance": 0.0,
                     "snapshot_status": "PENDING"
                 })
 
@@ -129,7 +137,7 @@ def main():
                 print(f"Object ID: {obj.get('object_id', 'N/A')}")
                 print(f"Type: {obj.get('type', 'N/A')} | Confidence: {obj.get('confidence', 0.0):.2f}")
                 print(f"Speed: {obj.get('speed_kmh', 0.0):.2f} km/h | Velocity: {obj.get('velocity', 0.0):.2f} m/s")
-                print(f"Radar Distance: {obj.get('radar_distance', 0.0):.2f} m")
+                print(f"Distance: {obj.get('distance', 0.0):.2f} m")
                 print(f"Position: x={obj.get('posX', 0.0):.2f}, y={obj.get('posY', 0.0):.2f}, z={obj.get('posZ', 0.0):.2f}")
                 print(f"Velocity Vector: vx={obj.get('velX', 0.0):.2f}, vy={obj.get('velY', 0.0):.2f}, vz={obj.get('velZ', 0.0):.2f}")
                 print(f"Acceleration: ax={obj.get('accX', 0.0):.2f}, ay={obj.get('accY', 0.0):.2f}, az={obj.get('accZ', 0.0):.2f}")
@@ -150,7 +158,7 @@ def main():
                 print(f"ID: {obj.get('object_id', 'N/A')}")
                 print(f"Type: {obj.get('type', 'N/A')} | Confidence: {obj.get('confidence', 0.0):.2f}")
                 print(f"Speed: {obj.get('speed_kmh', 0.0):.2f} km/h | Velocity: {obj.get('velocity', 0.0):.2f} m/s")
-                print(f"Distance: {obj.get('distance', 0.0):.2f} m | Radar Distance: {obj.get('radar_distance', 0.0):.2f} m")
+                print(f"Distance: {obj.get('distance', 0.0):.2f} m")
                 print(f"Position: x={obj.get('x', 0.0):.2f}, y={obj.get('y', 0.0):.2f}, z={obj.get('z', 0.0):.2f}")
                 print(f"Velocity Vector: vx={obj.get('velX', 0.0):.2f}, vy={obj.get('velY', 0.0):.2f}, vz={obj.get('velZ', 0.0):.2f}")
                 print(f"Acceleration: ax={obj.get('accX', 0.0):.2f}, ay={obj.get('accY', 0.0):.2f}, az={obj.get('accZ', 0.0):.2f}")
@@ -160,8 +168,25 @@ def main():
                 print(f"Motion State: {obj.get('motion_state', 'unknown')} | Direction: {obj.get('direction', 'unknown')}")
 
                 obj_id = obj['object_id']
+                # Cache acceleration magnitude
+                acc_mag = np.linalg.norm([
+                    obj.get("accX", 0.0),
+                    obj.get("accY", 0.0),
+                    obj.get("accZ", 0.0)
+                ])
+                acceleration_cache[obj_id].append(acc_mag)
+
                 speed_limit = tracker.get_limit_for(obj.get("type", "UNKNOWN"))
                 speeding = obj["speed_kmh"] > speed_limit
+                acc_buffer = acceleration_cache[obj_id]
+                acc_threshold = config.get("acceleration_threshold", 2.0)
+                acc_required_frames = config.get("min_acc_violation_frames", 3)
+
+                # Only evaluate if enough samples exist
+                acceleration_violating = (
+                    len(acc_buffer) >= acc_required_frames and
+                    sum(1 for a in acc_buffer if a > acc_threshold) >= acc_required_frames
+                )
                 recent = speeding_buffer[obj_id]
 
                 if speeding:
@@ -171,9 +196,14 @@ def main():
 
                 # Trigger only if object is speeding and recent buffer confirms persistence
                 should_trigger = (
-                    obj.get("motion_state") == "SPEEDING" and
-                    (len(recent) >= 2 and now - recent[0] <= 2.0)
+                    (
+                        obj.get("motion_state") == "SPEEDING" and
+                        (len(recent) >= 2 and now - recent[0] <= 2.0)
+                    )
+                    or acceleration_violating
                 )
+                reason = "speeding" if speeding else "acceleration"
+                logger.info(f"Trigger reason: {reason} for {obj_id}")
                 last_taken = last_snapshot_ids.get(obj_id, 0)
 
                 if should_trigger and now - last_taken > COOLDOWN_SECONDS:
@@ -181,7 +211,11 @@ def main():
                     logger.info(f"Triggering snapshot for {obj_id} — {obj['type']} @ {obj['speed_kmh']:.1f} km/h")
 
                     cam = config.get("cameras", [{}])[config.get("selected_camera", 0)]
-                    raw_path = capture_snapshot(cam.get("url"), cam.get("username"), cam.get("password"))
+                    raw_path = capture_snapshot(
+                        camera_url=cam.get("snapshot_url"),
+                        username=cam.get("username"),
+                        password=cam.get("password")
+                    )
                     ann_path = None
 
                     if raw_path and os.path.exists(raw_path):
@@ -193,10 +227,17 @@ def main():
 
                     if frame_buffer:
                         best = max(frame_buffer, key=lambda x: x["sharpness"])
-                        label = f"{obj['type']} | {obj['speed_kmh']:.1f} km/h"
-                        ann_path, visual_dist, updated_radar = annotate_speeding_object(
-                            image_path=best["path"],
-                            radar_distance=obj['radar_distance'],
+                        label = f"{obj['type']} | {obj['speed_kmh']:.1f} km/h | {obj['distance']:.1f} m"
+
+                        # Copy image for annotation
+                        frame_copy_path = best["path"]
+                        temp_annotated_path = os.path.join("snapshots", f"temp_{obj_id}.jpg")
+                        cv2.imwrite(temp_annotated_path, cv2.imread(frame_copy_path))
+                        logger.info(f"[ANNOTATION] Trying to annotate: {frame_copy_path} | Label: {label}")
+
+                        ann_path, _, _ = annotate_speeding_object(
+                            image_path=temp_annotated_path,
+                            radar_distance=obj['distance'],
                             label=label,
                             obj_x=obj.get("x", 0.0),
                             obj_y=obj.get("y", 0.0)
@@ -204,15 +245,13 @@ def main():
 
                         if ann_path:
                             obj.update({
-                                "visual_distance": visual_dist,
-                                "radar_distance": updated_radar,
                                 "snapshot_path": ann_path,
                                 "snapshot_status": "SUCCESS"
                             })
-                            logger.info(f"Annotated snapshot: {ann_path} | visual = {visual_dist:.2f}m, radar = {updated_radar:.2f}m")
+                            logger.info(f"Annotated snapshot for {obj_id}: {ann_path} | Distance = {obj['distance']:.2f}m | Speed = {obj['speed_kmh']:.1f}km/h ")
                         else:
                             obj["snapshot_status"] = "FAILED"
-                            logger.warning(f"Annotation failed for {obj_id}")
+                            logger.warning(f"[ANNOTATION FAILED] Returned None for {obj_id}")
 
                     # Log to PostgreSQL regardless
                     try:
@@ -221,11 +260,16 @@ def main():
                         cursor.execute("""
                             INSERT INTO radar_data (
                                 timestamp, datetime, sensor, object_id, type, confidence, speed_kmh,
-                                velocity, distance, radar_distance, visual_distance,
-                                direction, signal_level, doppler_frequency, snapshot_path,
-                                x, y, z, range, azimuth, elevation, motion_state, snapshot_status
-                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                                    %s, %s, %s, %s, %s, %s, %s, %s)
+                                velocity, distance, direction, signal_level, doppler_frequency, snapshot_path,
+                                x, y, z, range, azimuth, elevation, motion_state, snapshot_status,
+                                velx, vely, velz, snr, noise,
+                                accx, accy, accz,
+                                range_profile, noise_profile
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s, %s,
+                            %s, %s, %s,
+                            %s, %s)
                         """, (
                             to_native(obj['timestamp']),
                             datetime.fromtimestamp(to_native(obj['timestamp'])).strftime("%Y-%m-%d %H:%M:%S"),
@@ -236,8 +280,6 @@ def main():
                             to_native(obj.get('speed_kmh', 0.0)),
                             to_native(obj.get('velocity', 0.0)),
                             to_native(obj.get('distance', 0.0)),
-                            to_native(obj.get('radar_distance', 0.0)),
-                            to_native(obj.get('visual_distance', 0.0)),
                             to_native(obj.get("direction", "unknown")),
                             to_native(obj.get("signal_level", 0.0)),
                             to_native(obj.get("doppler_frequency", 0.0)),
@@ -249,7 +291,17 @@ def main():
                             to_native(obj.get("azimuth", 0.0)),
                             to_native(obj.get("elevation", 0.0)),
                             to_native(obj.get("motion_state", "unknown")),
-                            to_native(obj.get("snapshot_status", "FAILED"))
+                            to_native(obj.get("snapshot_status", "FAILED")),
+                            to_native(obj.get("velX", 0.0)),
+                            to_native(obj.get("velY", 0.0)),
+                            to_native(obj.get("velZ", 0.0)),
+                            to_native(obj.get("snr", 0.0)),
+                            to_native(obj.get("noise", 0.0)),
+                            to_native(obj.get("accX", 0.0)),
+                            to_native(obj.get("accY", 0.0)),
+                            to_native(obj.get("accZ", 0.0)),
+                            list(map(float, frame.get("range_profile", []))),
+                            list(map(float, frame.get("noise_profile", [])))
                         ))
                         conn.commit()
                         conn.close()
@@ -261,6 +313,37 @@ def main():
                         log_violation_to_csv(obj)
                         logger.warning(f"Logged fallback to CSV for {obj_id} due to snapshot failure")
 
+                        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        fallback_path = os.path.join("snapshots", f"heatmap_{obj_id}_{timestamp_str}.jpg")
+
+                        try:
+                            reshaped = None
+                            if plotter.heatmap_data is not None and plotter.heatmap_data.size > 0:
+                                for rows in [32, 64, 128]:
+                                    if plotter.heatmap_data.size % rows == 0:
+                                        try:
+                                            reshaped = plotter.heatmap_data.reshape((rows, -1))
+                                            break
+                                        except Exception:
+                                            continue
+
+                            if reshaped is not None:
+                                vmin = np.percentile(reshaped, 1)
+                                vmax = np.percentile(reshaped, 99)
+                                fig, ax = plt.subplots(figsize=(6, 4))
+                                im = ax.imshow(reshaped, cmap='hot', interpolation='nearest', origin='lower',
+                                            aspect='auto', vmin=vmin, vmax=vmax)
+                                ax.set_title("Range-Doppler Heatmap")
+                                fig.colorbar(im, ax=ax, label="Intensity")
+                                fig.tight_layout()
+                                fig.savefig(fallback_path)
+                                plt.close(fig)
+                                logger.info(f"Saved fallback heatmap snapshot for {obj_id} → {fallback_path}")
+                            else:
+                                logger.warning(f"Skipped fallback heatmap save — reshaping failed for object {obj_id}")
+                        except Exception as e:
+                            logger.warning(f"Failed to save fallback heatmap for {obj_id}: {e}")
+
             time.sleep(0.05)
 
     except KeyboardInterrupt:
@@ -268,3 +351,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+def start_main_loop():
+    t = Thread(target=main, daemon=True)
+    t.start()

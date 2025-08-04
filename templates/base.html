@@ -1,0 +1,1270 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="{{ theme | default('light') }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Radar Dashboard{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --secondary-gradient: linear-gradient(135deg, #5a6fd8 0%, #00aaff 100%);
+            --glass-bg: rgba(255,255,255,0.95);
+            --glass-bg-dark: rgba(0,0,0,0.8);
+            --glass-border: rgba(255,255,255,0.2);
+            --shadow-primary: 0 8px 32px rgba(0,0,0,0.1);
+            --shadow-hover: 0 12px 40px rgba(102,126,234,0.3);
+            --shadow-intense: 0 20px 60px rgba(0,0,0,0.2);
+
+            /* Theme variables for light mode */
+            --primary-bg: #eaf1f9;            /* soft light blue */
+            --card-bg: #ffffff;
+            --text-color: #1a202c;
+            --form-bg: #f8fafc;
+            --border-color: #cbd5e0;
+            --hover-bg: #dbe7f3;
+            --footer-bg: #dde6f0;
+            --navbar-bg: #f5faff;
+        }
+
+        [data-theme="dark"] {
+            --primary-gradient: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            --secondary-gradient: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%);
+            --glass-bg: rgba(30,41,59,0.9);
+            --glass-bg-dark: rgba(15,23,42,1);
+            --glass-border: rgba(255,255,255,0.1);
+            --shadow-primary: 0 8px 32px rgba(0,0,0,0.3);
+            --shadow-hover: 0 12px 40px rgba(29,78,216,0.3);
+            --shadow-intense: 0 20px 60px rgba(0,0,0,0.4);
+
+            /* Theme variables for dark mode */
+            --primary-bg: #0e1a2b;            /* dark navy */
+            --card-bg: #1a2238;              /* dark blue-gray */
+            --text-color: #f1f5f9;
+            --form-bg: #1e2a3c;
+            --border-color: #334155;
+            --hover-bg: rgba(255,255,255,0.05);
+            --footer-bg: #0d1726;
+            --navbar-bg: rgba(14,26,43,0.95);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--primary-bg);
+            color: var(--text-color);
+            min-height: 100vh;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            overflow-x: hidden;
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+
+        /* Only show gradient background in light mode */
+        body:not([data-theme="dark"])::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 0;
+            background:
+                radial-gradient(circle at 20% 80%, rgba(102, 126, 234, 0.08) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(90, 111, 216, 0.08) 0%, transparent 50%),
+                radial-gradient(circle at 40% 40%, rgba(120, 219, 255, 0.06) 0%, transparent 50%);
+        }
+
+        @keyframes gradientShift {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.8; }
+        }
+
+        .navbar { 
+            background-color: var(--navbar-bg);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border-color);
+            box-shadow: var(--shadow-primary);
+            position: sticky;
+            top: 0;
+            z-index: 1030;
+            padding: 0.8rem 0;
+        }
+
+        .navbar-brand { 
+            font-weight: 800;
+            font-size: 1.8rem;
+            background: var(--secondary-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            text-decoration: none;
+            letter-spacing: -0.5px;
+            position: relative;
+        }
+
+        .navbar-brand::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            width: 0;
+            height: 2px;
+            background: var(--secondary-gradient);
+            transition: width 0.3s ease;
+        }
+
+        .navbar-brand:hover::after {
+            width: 100%;
+        }
+
+        .nav-link {
+            color: var(--text-color) !important;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border-radius: 12px;
+            margin: 0 4px;
+            padding: 8px 16px;
+            font-weight: 500;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .nav-link::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+            transition: left 0.5s;
+        }
+
+        .nav-link:hover::before {
+            left: 100%;
+        }
+
+        .nav-link:hover {
+            background: var(--hover-bg);
+            backdrop-filter: blur(10px);
+            transform: translateY(-2px);
+            color: var(--text-color) !important;
+        }
+
+        .nav-link.active {
+            background: var(--secondary-gradient);
+            color: #fff !important;
+            box-shadow: 0 4px 15px rgba(77, 182, 252, 0.4);
+        }
+
+        .dropdown-menu {
+            background-color: var(--card-bg);
+            color: var(--text-color);
+            backdrop-filter: blur(25px);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            box-shadow: var(--shadow-intense);
+            padding: 8px;
+            margin-top: 8px;
+        }
+
+        .dropdown-item {
+            color: var(--text-color);
+            border-radius: 10px;
+            margin: 2px 0;
+            transition: all 0.3s ease;
+            font-weight: 500;
+            padding: 10px 16px;
+        }
+
+        .dropdown-item:hover {
+            background: var(--secondary-gradient);
+            color: white;
+            transform: translateX(4px);
+        }
+
+        .card { 
+            border: none; 
+            box-shadow: var(--shadow-primary);
+            background-color: var(--card-bg);
+            color: var(--text-color);
+            backdrop-filter: blur(20px);
+            border-radius: 24px;
+            border: 1px solid var(--border-color);
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            overflow: hidden;
+            position: relative;
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: var(--secondary-gradient);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-8px) scale(1.02);
+            box-shadow: var(--shadow-intense);
+        }
+
+        .card:hover::before {
+            opacity: 1;
+        }
+
+        .card-header {
+            background: linear-gradient(135deg, rgba(102,126,234,0.1), rgba(245,87,108,0.1));
+            border-bottom: 1px solid var(--border-color);
+            padding: 1.5rem;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+
+        .chart-container {
+            position: relative;
+            height: 320px;
+            width: 100%;
+            padding: 20px;
+        }
+
+        .chart-canvas {
+            max-height: 280px;
+            border-radius: 16px;
+        }
+
+        .chart-error {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            min-height: 200px;
+            color: var(--text-color);
+            opacity: 0.6;
+            font-style: italic;
+        }
+
+        .btn-primary { 
+            background: var(--secondary-gradient);
+            border: none;
+            border-radius: 25px;
+            padding: 12px 32px;
+            font-weight: 600;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 4px 15px rgba(72, 180, 243, 0.4);
+            position: relative;
+            overflow: hidden;
+            color: white;
+        }
+
+        .btn-primary::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            background: rgba(255,255,255,0.2);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            transition: width 0.6s, height 0.6s;
+        }
+
+        .btn-primary:hover::before {
+            width: 300px;
+            height: 300px;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.5);  /* updated shadow */
+            background: linear-gradient(135deg, #5a6fd8 0%, #667eea 100%);
+        }
+
+        .btn-outline-light {
+            border: 2px solid var(--border-color);
+            color: var(--text-color);
+            transition: all 0.3s ease;
+            border-radius: 20px;
+            font-weight: 500;
+            padding: 8px 20px;
+        }
+
+        .btn-outline-light:hover {
+            background: var(--hover-bg);
+            color: var(--text-color);
+            backdrop-filter: blur(10px);
+            transform: translateY(-2px);
+            border-color: var(--border-color);
+        }
+
+        .btn-secondary {
+            background-color: var(--card-bg);
+            color: var(--text-color);
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-secondary:hover {
+            background-color: var(--hover-bg);
+            color: var(--text-color);
+            border-color: var(--border-color);
+        }
+
+        .modal-backdrop {
+            backdrop-filter: blur(12px);
+            background-color: rgba(0,0,0,0.7);
+        }
+
+        .modal-content {
+            background-color: var(--card-bg);
+            color: var(--text-color);
+            backdrop-filter: blur(25px);
+            border: 1px solid var(--border-color);
+            border-radius: 24px;
+            box-shadow: var(--shadow-intense);
+            overflow: hidden;
+        }
+
+        .modal-header {
+            border-bottom: 1px solid var(--border-color);
+            background: linear-gradient(135deg, rgba(102,126,234,0.1), rgba(245,87,108,0.1));
+            padding: 1.5rem;
+        }
+
+        .modal-title {
+            font-weight: 700;
+            background: var(--secondary-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .alert {
+            border-radius: 16px;
+            border: none;
+            backdrop-filter: blur(15px);
+            box-shadow: var(--shadow-primary);
+            font-weight: 500;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .alert::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 4px;
+            height: 100%;
+            background: currentColor;
+        }
+
+        .alert-success {
+            background: rgba(25, 135, 84, 0.1);
+            color: #0f5132;
+            border: 1px solid rgba(25, 135, 84, 0.2);
+        }
+
+        [data-theme="dark"] .alert-success {
+            background: rgba(25, 135, 84, 0.2);
+            color: #a3e635;
+        }
+
+        .alert-danger {
+            background: rgba(220, 53, 69, 0.1);
+            color: #842029;
+            border: 1px solid rgba(220, 53, 69, 0.2);
+        }
+
+        [data-theme="dark"] .alert-danger {
+            background: rgba(220, 53, 69, 0.2);
+            color: #fca5a5;
+        }
+
+        .alert-warning {
+            background: rgba(255, 193, 7, 0.1);
+            color: #664d03;
+            border: 1px solid rgba(255, 193, 7, 0.2);
+        }
+
+        [data-theme="dark"] .alert-warning {
+            background: rgba(255, 193, 7, 0.2);
+            color: #fde047;
+        }
+
+        footer {
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            border-top: 1px solid var(--glass-border);
+            margin-top: 4rem;
+            padding: 2rem 0;
+            color: var(--text-color);
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+        
+        footer small {
+            color: var(--text-color);
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-left: 8px;
+            animation: pulse 2s infinite;
+            box-shadow: 0 0 15px currentColor;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.6; transform: scale(1.2); }
+            100% { opacity: 1; transform: scale(1); }
+        }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s linear infinite;
+        }
+        
+        #speedChartLoading, #directionChartLoading {
+            display: none !important;
+            z-index: -1 !important;
+            pointer-events: none;
+            opacity: 0;
+        }
+
+        canvas.chart-canvas {
+            display: block !important;
+            z-index: 1;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .page-transition {
+            opacity: 0;
+            transform: translateY(30px);
+            animation: fadeInUp 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+        }
+
+        @keyframes fadeInUp {
+            to { 
+                opacity: 1; 
+                transform: translateY(0); 
+            }
+        }
+
+        .admin-badge {
+            background: var(--secondary-gradient);
+            color: white;
+            font-size: 0.65rem;
+            padding: 3px 8px;
+            border-radius: 12px;
+            margin-left: 6px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            box-shadow: 0 2px 8px rgba(117, 199, 253, 0.3);
+        }
+
+        .form-control {
+            border-radius: 12px;
+            border: 2px solid var(--border-color);
+            background-color: var(--form-bg);
+            color: var(--text-color);
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+            padding: 12px 16px;
+        }
+
+        .form-control:focus {
+            border-color: #57b6f5;
+            box-shadow: 0 0 0 0.2rem rgba(87, 182, 245, 0.25);
+            background-color: var(--form-bg);
+            color: var(--text-color);
+        }
+
+        .form-label {
+            font-weight: 600;
+            color: var(--text-color);
+            margin-bottom: 8px;
+        }
+
+        .form-select {
+            background-color: var(--form-bg);
+            color: var(--text-color);
+            border: 2px solid var(--border-color);
+            border-radius: 12px;
+        }
+
+        .form-select:focus {
+            border-color: #57aef5;
+            box-shadow: 0 0 0 0.2rem rgba(87, 187, 245, 0.25);
+            background-color: var(--form-bg);
+            color: var(--text-color);
+        }
+
+        .table {
+            background-color: var(--card-bg);
+            color: var(--text-color);
+            backdrop-filter: blur(15px);
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: var(--shadow-primary);
+        }
+
+        .table th {
+            background: linear-gradient(135deg, rgba(102,126,234,0.1), rgba(245,87,108,0.1));
+            border: none;
+            font-weight: 600;
+            padding: 1rem;
+            color: var(--text-color);
+        }
+
+        .table td {
+            border: none;
+            padding: 1rem;
+            border-bottom: 1px solid var(--border-color);
+            color: var(--text-color);
+        }
+
+        .table-hover tbody tr:hover {
+            background-color: var(--hover-bg);
+        }
+
+        .navbar-toggler {
+            border: none;
+            padding: 4px 8px;
+        }
+
+        .navbar-toggler:focus {
+            box-shadow: none;
+        }
+
+        .navbar-toggler-icon {
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba%28255, 255, 255, 0.8%29' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='m4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
+        }
+
+        [data-theme="dark"] .navbar-toggler-icon {
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba%28226, 232, 240, 0.8%29' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='m4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
+        }
+
+        .form-check-input:checked {
+            background-color: #f5576c;
+            border-color: #f5576c;
+        }
+
+        .form-check-label {
+            color: var(--text-color);
+        }
+
+        .btn-close {
+            filter: var(--bs-btn-close-white-filter);
+        }
+
+        [data-theme="dark"] .btn-close {
+            filter: invert(1) grayscale(100%) brightness(200%);
+        }
+
+        @media (max-width: 768px) {
+            .container { 
+                padding: 0 20px; 
+            }
+            
+            .card { 
+                margin-bottom: 24px; 
+                border-radius: 16px;
+            }
+            
+            .navbar-brand { 
+                font-size: 1.5rem; 
+            }
+            
+            .nav-link { 
+                margin: 4px 0; 
+                text-align: center;
+            }
+            
+            .chart-container {
+                height: 250px;
+                padding: 15px;
+            }
+            
+            .btn-primary {
+                padding: 10px 24px;
+                font-size: 0.9rem;
+            }
+        }
+
+        @media (max-width: 576px) {
+            .navbar-brand {
+                font-size: 1.3rem;
+            }
+            
+            .card-header {
+                padding: 1rem;
+            }
+            
+            .modal-header {
+                padding: 1rem;
+            }
+        }
+
+        .btn:focus, .nav-link:focus, .form-control:focus {
+            outline: 2px solid rgba(245, 87, 108, 0.5);
+            outline-offset: 2px;
+        }
+
+        ::-webkit-scrollbar { 
+            width: 10px; 
+        }
+        
+        ::-webkit-scrollbar-track { 
+            background: var(--card-bg);
+            border-radius: 5px;
+        }
+        
+        ::-webkit-scrollbar-thumb { 
+            background: var(--border-color);
+            border-radius: 5px;
+        }
+
+        .fade-enter {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+
+        .fade-enter-active {
+            opacity: 1;
+            transform: translateY(0);
+            transition: opacity 0.3s ease, transform 0.3s ease;
+        }
+
+        .slide-up {
+            animation: slideUp 0.5s ease forwards;
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+    </style>
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container">
+            <a class="navbar-brand d-flex align-items-center gap-2" href="/" aria-label="Radar System Home">
+                <img src="{{ url_for('static', filename='essi_logo.jpeg') }}"
+                    alt="ESSI Logo" 
+                    style="height: 36px; border-radius: 8px; background: white; padding: 2px;">
+                <span class="d-none d-sm-inline">Radar System</span>
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    {% if current_user.is_authenticated %}
+                        <li class="nav-item">
+                            <a class="nav-link" href="/" aria-label="Dashboard">
+                                Dashboard
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="/gallery" aria-label="Gallery">
+                                Gallery
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                        <a class="nav-link" href="/logs">
+                            Logs 
+                        </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="/export_pdf" aria-label="Download PDF Report">
+                                Export 
+                            </a>
+                        </li>
+                        {% if is_admin %}
+                        <li class="nav-item">
+                            <a class="nav-link" href="/users" aria-label="User Management">
+                                Users<span class="admin-badge">Admin</span>
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="/control" aria-label="System Control">
+                                Control<span class="admin-badge">Admin</span>
+                            </a>
+                        </li>
+                        {% endif %}
+                        <li class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                {{ current_user.username }}
+                            </a>
+                            <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
+                                <li><a class="dropdown-item" href="#" id="change-password-btn">Change Password</a></li>
+                                {% if is_admin %}
+                                <li>
+                                    <a class="dropdown-item" href="#" id="add-user-btn">Add New User</a>
+                                </li>
+                                {% endif %}
+                                <li class="nav-item d-flex align-items-center ms-2">
+                                    <div class="form-check form-switch text-white">
+                                        <input class="form-check-input" type="checkbox" id="themeToggle" onchange="toggleTheme()">
+                                        <label class="form-check-label" for="themeToggle">Dark Mode</label>
+                                    </div>
+                                </li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li>
+                                    <form method="POST" action="{{ url_for('logout') }}" class="d-inline">
+                                        <button type="submit" class="dropdown-item" aria-label="Logout">
+                                            Logout
+                                        </button>
+                                    </form>
+                                </li>
+                            </ul>
+                        </li>
+                    {% else %}
+                        <li class="nav-item">
+                            <a class="nav-link" href="/login" aria-label="Login">
+                                Login
+                            </a>
+                        </li>
+                    {% endif %}
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container my-4 page-transition" role="main" id="main-content">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ 'danger' if category == 'error' else 'success' if category == 'success' else 'warning' }} alert-dismissible fade show slide-up" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="text-center text-white" role="contentinfo">
+        <div class="container">
+            <div class="row">
+                <div class="col-md-6 text-md-start">
+                    <small>&copy; {{ now.year if now else '2025' }} Radar Detection System</small>
+                </div>
+                <div class="col-md-6 text-md-end">
+                    <small>
+                        Status: <span id="status" class="fw-bold">Online</span>
+                        <span id="statusDot" class="status-indicator bg-success"></span>
+                    </small>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Core JavaScript Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script>
+        window.Chart = window.Chart || Chart;
+    </script>
+
+    <script>
+        class RadarDashboard {
+            constructor() {
+                this.initializeNavigation();
+                this.initializeSessionManagement();
+                this.initializeModalHandling();
+                this.initializeFormHandling();
+                this.initializeAccessibility();
+                this.initializeDropdowns();
+                this.initializeChangePasswordModal();
+                this.initializeAddUserModal();
+                this.initializeAnimations();
+                this.initializeTooltips();
+            }
+
+            initializeNavigation() {
+                const currentPath = window.location.pathname;
+                const navLinks = document.querySelectorAll('.nav-link:not(.dropdown-toggle)');
+                
+                navLinks.forEach(link => {
+                    const href = link.getAttribute('href');
+                    if (href && (currentPath === href || (href !== '/' && currentPath.startsWith(href)))) {
+                        link.classList.add('active');
+                    }
+                });
+            }
+
+            initializeDropdowns() {
+                const userDropdown = document.getElementById('userDropdown');
+                if (userDropdown) {
+                    const dropdown = new bootstrap.Dropdown(userDropdown);
+                    
+                    const changePasswordBtn = document.getElementById('change-password-btn');
+                    if (changePasswordBtn) {
+                        changePasswordBtn.addEventListener('click', (e) => {
+                            e.preventDefault();
+                            this.showChangePasswordModal();
+                        });
+                    }
+
+                    const addUserBtn = document.getElementById('add-user-btn');
+                    if (addUserBtn) {
+                        addUserBtn.addEventListener('click', (e) => {
+                            e.preventDefault();
+                            this.showAddUserModal();
+                        });
+                    }
+                }
+            }
+
+            initializeChangePasswordModal() {
+                const existingModal = document.getElementById('baseChangePasswordModal');
+                if (existingModal) {
+                    existingModal.remove();
+                }
+            }
+
+            initializeAddUserModal() {
+                const existingModal = document.getElementById('baseAddUserModal');
+                if (existingModal) {
+                    existingModal.remove();
+                }
+            }
+
+            showChangePasswordModal() {
+                let modal = document.getElementById('baseChangePasswordModal');
+                if (!modal) {
+                    modal = this.createChangePasswordModal();
+                    document.body.appendChild(modal);
+                }
+                
+                const bsModal = new bootstrap.Modal(modal, {
+                    backdrop: 'static',
+                    keyboard: true
+                });
+                
+                modal.addEventListener('shown.bs.modal', () => {
+                    const firstInput = modal.querySelector('#baseCurrentPassword');
+                    if (firstInput) firstInput.focus();
+                });
+                
+                bsModal.show();
+            }
+
+            showAddUserModal() {
+                let modal = document.getElementById('baseAddUserModal');
+                if (!modal) {
+                    modal = this.createAddUserModal();
+                    document.body.appendChild(modal);
+                }
+                
+                const bsModal = new bootstrap.Modal(modal, {
+                    backdrop: 'static',
+                    keyboard: true
+                });
+                
+                modal.addEventListener('shown.bs.modal', () => {
+                    const firstInput = modal.querySelector('#baseNewUsername');
+                    if (firstInput) firstInput.focus();
+                });
+                
+                bsModal.show();
+            }
+
+            createChangePasswordModal() {
+                const modalHTML = `
+                    <div class="modal fade" id="baseChangePasswordModal" tabindex="-1" aria-labelledby="baseChangePasswordModalLabel" aria-hidden="true">
+                        <div class="modal-dialog modal-dialog-centered">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h5 class="modal-title" id="baseChangePasswordModalLabel">Change Password</h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <form method="POST" action="/change_password" id="baseChangePasswordForm">
+                                    <div class="modal-body">
+                                        <input type="hidden" name="action" value="change_password">
+                                        <div class="mb-3">
+                                        <label for="current_password" class="form-label">Current Password</label>
+                                        <input type="password" class="form-control" id="current_password" name="current_password" required>
+                                        </div>
+                                        <div class="mb-3">
+                                        <label for="new_password" class="form-label">New Password</label>
+                                        <input type="password" class="form-control" id="new_password" name="new_password" required>
+                                        </div>
+                                        <div class="mb-3">
+                                        <label for="confirm_password" class="form-label">Confirm New Password</label>
+                                        <input type="password" class="form-control" id="confirm_password" name="confirm_password" required>
+                                        </div>
+                                    </div>
+                                    <div class="modal-footer">
+                                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                                        <button type="submit" class="btn btn-primary">Change Password</button>
+                                    </div>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                const div = document.createElement('div');
+                div.innerHTML = modalHTML;
+                return div.firstElementChild;
+            }
+
+            createAddUserModal() {
+                const modalHTML = `
+                    <div class="modal fade" id="baseAddUserModal" tabindex="-1" aria-labelledby="baseAddUserModalLabel" aria-hidden="true">
+                        <div class="modal-dialog modal-dialog-centered">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h5 class="modal-title" id="baseAddUserModalLabel">Add New User</h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <form method="POST" action="{{ url_for('users') }}" id="addUserForm">
+                                        <input type="hidden" name="action" value="add_user">
+
+                                        <div class="modal-body">
+                                            <div class="mb-3">
+                                            <label for="username" class="form-label">Username</label>
+                                            <input type="text" class="form-control" id="username" name="username" required>
+                                            </div>
+
+                                            <div class="mb-3">
+                                            <label for="password" class="form-label">Password</label>
+                                            <input type="password" class="form-control" id="password" name="password" required>
+                                            </div>
+
+                                            <div class="mb-3">
+                                            <label for="confirm_password" class="form-label">Confirm Password</label>
+                                            <input type="password" class="form-control" id="confirm_password" name="confirm_password" required>
+                                            </div>
+
+                                            <div class="mb-3">
+                                            <label for="role" class="form-label">Role</label>
+                                            <select class="form-select" id="role" name="role" required>
+                                                <option value="viewer">Viewer</option>
+                                                <option value="admin">Administrator</option>
+                                            </select>
+                                            </div>
+                                        </div>
+
+                                        <div class="modal-footer">
+                                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                            <button type="submit" class="btn btn-primary">Add User</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                const div = document.createElement('div');
+                div.innerHTML = modalHTML;
+                return div.firstElementChild;
+            }
+
+            initializeSessionManagement() {
+                this.logoutTimer = null;
+                this.warningShown = false;
+                const LOGOUT_TIME = 30 * 60 * 1000;
+                const WARNING_TIME = 28 * 60 * 1000;
+
+                const resetTimer = () => {
+                    clearTimeout(this.logoutTimer);
+                    this.warningShown = false;
+                    
+                    setTimeout(() => {
+                        if (!this.warningShown) {
+                            this.showLogoutWarning();
+                            this.warningShown = true;
+                        }
+                    }, WARNING_TIME);
+
+                    this.logoutTimer = setTimeout(async () => {
+                        try {
+                            const response = await fetch("/logout", { 
+                                method: "POST",
+                                headers: {
+                                    'Content-Type': 'application/x-www-form-urlencoded',
+                                }
+                            });
+                            if (response.ok) {
+                                window.location.href = "/login";
+                            }
+                        } catch (error) {
+                            console.error('Auto logout failed:', error);
+                            window.location.href = "/login";
+                        }
+                    }, LOGOUT_TIME);
+                };
+
+                if (document.querySelector('.navbar .dropdown')) {
+                    const activityEvents = ["click", "mousemove", "keypress", "scroll", "touchstart"];
+                    activityEvents.forEach(event => {
+                        document.addEventListener(event, resetTimer, { passive: true });
+                    });
+
+                    resetTimer();
+                }
+            }
+
+            showLogoutWarning() {
+                const alertDiv = document.createElement('div');
+                alertDiv.className = 'alert alert-warning alert-dismissible fade show position-fixed slide-up';
+                alertDiv.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 350px; max-width: 400px;';
+                alertDiv.innerHTML = `
+                    <div class="d-flex align-items-center">
+                        <div class="me-3">
+                            <div class="spinner-border spinner-border-sm text-warning" role="status" aria-hidden="true"></div>
+                        </div>
+                        <div>
+                            <strong>Session Warning:</strong><br>
+                            <small>You will be logged out in 2 minutes due to inactivity.</small>
+                        </div>
+                        <button type="button" class="btn-close ms-auto" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                `;
+                document.body.appendChild(alertDiv);
+
+                setTimeout(() => {
+                    if (alertDiv.parentNode) {
+                        alertDiv.classList.remove('show');
+                        setTimeout(() => alertDiv.remove(), 150);
+                    }
+                }, 8000);
+            }
+
+            initializeModalHandling() {
+                window.cleanupModals = () => {
+                    document.querySelectorAll('.modal.show').forEach(modalEl => {
+                        const instance = bootstrap.Modal.getInstance(modalEl);
+                        if (instance) instance.hide();
+                    });
+                    
+                    setTimeout(() => {
+                        document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+                        document.body.classList.remove('modal-open');
+                        document.body.style.removeProperty('overflow');
+                        document.body.style.removeProperty('padding-right');
+                    }, 150);
+                };
+
+                document.addEventListener('hidden.bs.modal', (e) => {
+                    setTimeout(() => {
+                        const remainingBackdrops = document.querySelectorAll('.modal-backdrop');
+                        if (remainingBackdrops.length === 0) {
+                            document.body.classList.remove('modal-open');
+                            document.body.style.removeProperty('overflow');
+                            document.body.style.removeProperty('padding-right');
+                        }
+                    }, 200);
+                });
+            }
+
+            initializeFormHandling() {
+                const forms = document.querySelectorAll('form.needs-validation');
+                forms.forEach(form => {
+                    form.addEventListener('submit', function (event) {
+                        if (!form.checkValidity()) {
+                            event.preventDefault();
+                            event.stopPropagation();
+                        }
+                        form.classList.add('was-validated');
+                    });
+                });
+            }
+
+            initializeAccessibility() {
+                const focusables = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'Tab' && document.activeElement.closest('.modal')) {
+                        const modal = document.activeElement.closest('.modal');
+                        const focusable = Array.from(modal.querySelectorAll(focusables)).filter(el => !el.disabled);
+                        const first = focusable[0];
+                        const last = focusable[focusable.length - 1];
+
+                        if (e.shiftKey && document.activeElement === first) {
+                            e.preventDefault();
+                            last.focus();
+                        } else if (!e.shiftKey && document.activeElement === last) {
+                            e.preventDefault();
+                            first.focus();
+                        }
+                    }
+                });
+            }
+
+            initializeAnimations() {
+                const animatedElements = document.querySelectorAll('.page-transition');
+                animatedElements.forEach(el => {
+                    el.classList.add('fade-enter');
+                    setTimeout(() => {
+                        el.classList.add('fade-enter-active');
+                    }, 50);
+                });
+            }
+
+            initializeTooltips() {
+                document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+                    new bootstrap.Tooltip(el);
+                });
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            window.RadarDashboard = new RadarDashboard();
+        });
+
+        window.submitChangePassword = async function () {
+            const form = document.getElementById('baseChangePasswordForm');
+            if (!form) return;
+
+            if (!form.checkValidity()) {
+                form.classList.add('was-validated');
+                return;
+            }
+
+            const newPassword = document.getElementById('baseNewPassword').value;
+            const confirmPassword = document.getElementById('baseConfirmPassword').value;
+
+            if (newPassword !== confirmPassword) {
+                alert("New passwords do not match!");
+                return;
+            }
+
+            const formData = new FormData(form);
+            const params = new URLSearchParams(formData);
+
+            try {
+                const response = await fetch("/change_password", {
+                    method: "POST",
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded'
+                    },
+                    body: params.toString()
+                });
+
+                if (response.ok) {
+                    window.cleanupModals();
+                    location.reload();
+                } else {
+                    const errorText = await response.text();
+                    alert("Password change failed: " + errorText);
+                }
+            } catch (error) {
+                console.error("Error changing password:", error);
+                alert("An unexpected error occurred.");
+            }
+        };
+
+        window.submitAddUser = async function () {
+            const form = document.getElementById('baseAddUserForm');
+            if (!form) return;
+
+            if (!form.checkValidity()) {
+                form.classList.add('was-validated');
+                return;
+            }
+
+            const password = document.getElementById('baseNewUserPassword').value;
+            const confirmPassword = document.getElementById('baseConfirmUserPassword').value;
+
+            if (password !== confirmPassword) {
+                alert("Passwords do not match!");
+                return;
+            }
+
+            const formData = new FormData(form);
+            const params = new URLSearchParams(formData);
+
+            try {
+                const response = await fetch("/add_user", {
+                    method: "POST",
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded'
+                    },
+                    body: params.toString()
+                });
+
+                if (response.ok) {
+                    window.cleanupModals();
+                    // Show success message
+                    const alertDiv = document.createElement('div');
+                    alertDiv.className = 'alert alert-success alert-dismissible fade show slide-up';
+                    alertDiv.innerHTML = `
+                        User added successfully!
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    `;
+                    document.getElementById('main-content').prepend(alertDiv);
+                    
+                    // Auto-dismiss after 5 seconds
+                    setTimeout(() => {
+                        if (alertDiv.parentNode) {
+                            alertDiv.classList.remove('show');
+                            setTimeout(() => alertDiv.remove(), 150);
+                        }
+                    }, 5000);
+                } else {
+                    const errorText = await response.text();
+                    alert("Failed to add user: " + errorText);
+                }
+            } catch (error) {
+                console.error("Error adding user:", error);
+                alert("An unexpected error occurred while adding the user.");
+            }
+        };
+    </script>
+    <script>
+    function applyTheme(theme) {
+      document.documentElement.setAttribute("data-theme", theme);
+      localStorage.setItem("theme", theme);
+      const toggle = document.getElementById("themeToggle");
+      if (toggle) toggle.checked = theme === "dark";
+    }
+
+    function toggleTheme() {
+      const current = document.documentElement.getAttribute("data-theme") || "light";
+      applyTheme(current === "dark" ? "light" : "dark");
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      const saved = localStorage.getItem("theme") || "light";
+      applyTheme(saved);
+    });
+  </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

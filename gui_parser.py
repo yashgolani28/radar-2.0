@@ -103,7 +103,9 @@ class uartParser():
             if self.parserType == "Standard":
                 outputDict = parseStandardFrame(frameData)
                 if 'trackData' in outputDict and any(obj.get("speed_kmh", 0.0) > 3.0 for obj in outputDict['trackData']):
-                    print("[Stats TLV]", outputDict['stats'])
+                    stats = outputDict.get('stats')
+                    if stats:
+                        print("[Stats TLV]", stats)
             else:
                 print('FAILURE: Bad parserType')
                 outputDict = {"error": 1}
@@ -125,13 +127,23 @@ class uartParser():
     #send cfg over uart
     def sendCfg(self, cfg):
         for line in cfg:
-            time.sleep(.03)
-            self.cliCom.write(line.encode())
-            ack = self.cliCom.readline()
-            print(ack)
-            ack = self.cliCom.readline()
-            print(ack)
-        time.sleep(3)
+            clean_line = line.strip()
+            if not clean_line or clean_line.startswith('%'):
+                continue  # skip comments or empty lines
+
+            print(f"[CFG SEND] → {clean_line}")
+            self.cliCom.write((clean_line + '\n').encode())
+
+            ack1 = self.cliCom.readline().decode(errors="ignore").strip()
+            ack2 = self.cliCom.readline().decode(errors="ignore").strip()
+            if ack1:
+                print(f"[RADAR RESP] {ack1}")
+            if ack2:
+                print(f"[RADAR RESP] {ack2}")
+
+            time.sleep(0.05)
+
+        time.sleep(2)
         self.cliCom.reset_input_buffer()
         self.cliCom.close()
         print("[INFO] Config sent successfully.")

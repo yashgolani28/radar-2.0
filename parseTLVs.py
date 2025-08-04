@@ -224,6 +224,12 @@ def parseTrackTLV(tlvData, tlvLength):
     for i in range(numDetectedTargets):
         try:
             targetData = struct.unpack(targetStruct, tlvData[:targetSize])
+            vel = np.sqrt(targetData[4]**2 + targetData[5]**2 + targetData[6]**2)
+            doppler = 2 * vel / 0.005  # for 60GHz radar
+            snr = float(targetData[24]) if len(targetData) > 24 else 0.0
+            gain = float(targetData[25]) if len(targetData) > 25 else 0.0
+            signal = gain * snr if gain and snr else 0.0
+
             targets.append({
                 "id": int(targetData[0]),
                 "posX": float(targetData[1]),
@@ -237,8 +243,14 @@ def parseTrackTLV(tlvData, tlvLength):
                 "accZ": float(targetData[9]),
                 "g": float(targetData[26]),
                 "confidence": float(targetData[27]),
-                "speed_kmh": float(np.sqrt(targetData[4]**2 + targetData[5]**2 + targetData[6]**2) * 3.6),
+                "speed_kmh": float(vel * 3.6),
                 "distance": float(np.sqrt(targetData[1]**2 + targetData[2]**2 + targetData[3]**2)),
+                "azimuth": np.rad2deg(np.arctan2(targetData[2], targetData[1] + 1e-6)),
+                "elevation": np.rad2deg(np.arctan2(targetData[3], np.sqrt(targetData[1]**2 + targetData[2]**2 + 1e-6))),
+                "snr": snr,
+                "gain": gain,
+                "doppler_frequency": doppler,
+                "signal_level": signal,
                 "type": "human"
             })
         except Exception as e:

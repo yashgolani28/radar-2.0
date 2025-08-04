@@ -95,17 +95,21 @@ class ObjectTracker:
                     matched_id = oid
                     min_dist = dist
 
+            matched_id = det.get("object_id")
+
             if not matched_id:
                 obj_type = det.get("type", "UNKNOWN").upper()
-                timestamp_str = datetime.fromtimestamp(current_time).strftime("%Y%m%d_%H%M%S")
+                date_str = datetime.fromtimestamp(current_time).strftime("%Y%m%d")
                 radar_id = det.get("id")
-                
                 try:
                     radar_id = int(radar_id)
                 except:
-                    radar_id = len(self.trackers) + 1  # fallback index
-                
-                matched_id = f"{obj_type}_{timestamp_str}_{radar_id}"
+                    radar_id = len(self.trackers) + 1
+                matched_id = f"{obj_type}_{date_str}_{radar_id}"
+                det["object_id"] = matched_id  # assign it back
+
+            # Always ensure the tracker is created before accessing
+            if matched_id not in self.trackers:
                 self.trackers[matched_id] = KalmanFilter3D(position)
 
             tracker = self.trackers[matched_id]

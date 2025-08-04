@@ -1,0 +1,602 @@
+{% extends "base.html" %}
+{% block title %}Snapshot Gallery{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2 class="fw-bold" style="color: var(--text-color);">Detection Gallery</h2>
+    <span class="badge bg-info text-dark">{{ snapshots|length }} Images</span>
+</div>
+
+<!-- Filters -->
+<div class="card mb-4">
+  <div class="card-body">
+    <h5 class="card-title">Filters</h5>
+
+    <form method="GET" class="row g-3" id="filterForm" action="{{ url_for('gallery') }}">
+      <input type="hidden" name="download" value="0">
+
+      <!-- Speed filters -->
+      <div class="col-md-2">
+        <label class="form-label">Min Speed (km/h)</label>
+        <input type="number" name="min_speed" class="form-control" step="0.1"
+               value="{{ request.args.get('min_speed', '') }}" placeholder="0">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Max Speed (km/h)</label>
+        <input type="number" name="max_speed" class="form-control" step="0.1"
+               value="{{ request.args.get('max_speed', '') }}" placeholder="999">
+      </div>
+
+      <!-- Object Type -->
+      <div class="col-md-2">
+        <label class="form-label">Object Type</label>
+        <select name="type" class="form-select">
+          <option value="">All Types</option>
+          {% for opt in ['VEHICLE', 'HUMAN', 'CAR', 'TRUCK', 'BIKE', 'UNKNOWN'] %}
+            <option value="{{ opt }}" {% if request.args.get('type') == opt %}selected{% endif %}>{{ opt.title() }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- Direction -->
+      <div class="col-md-2">
+        <label class="form-label">Direction</label>
+        <select name="direction" class="form-select">
+          <option value="">All Directions</option>
+          {% for opt in ['approaching', 'departing', 'stationary'] %}
+            <option value="{{ opt }}" {% if request.args.get('direction') == opt %}selected{% endif %}>{{ opt.title() }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- Snapshot Type -->
+      <div class="col-md-2">
+        <label class="form-label">Snapshot Type</label>
+        <select name="snapshot_type" class="form-select">
+          <option value="">All</option>
+          <option value="manual" {% if request.args.get('snapshot_type') == 'manual' %}selected{% endif %}>Manual</option>
+          <option value="auto" {% if request.args.get('snapshot_type') == 'auto' %}selected{% endif %}>Auto</option>
+        </select>
+      </div>
+
+      <!-- Motion State -->
+      <div class="col-md-2">
+      <label class="form-label">Motion</label>
+      <select name="motion_state" class="form-select">
+          <option value="">All Motions</option>
+          {% for opt in ['moving', 'speeding', 'static'] %}
+          <option value="{{ opt }}" {% if request.args.get('motion_state') == opt %}selected{% endif %}>{{ opt.title() }}</option>
+          {% endfor %}
+      </select>
+      </div>
+
+      <!-- Dates -->
+      <div class="col-md-2">
+        <label class="form-label">Start Date</label>
+        <input type="date" name="start_date" class="form-control"
+               value="{{ request.args.get('start_date', '') }}">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">End Date</label>
+        <input type="date" name="end_date" class="form-control"
+               value="{{ request.args.get('end_date', '') }}">
+      </div>
+
+      <!-- Object ID -->
+      <div class="col-md-3">
+        <label class="form-label">Object ID</label>
+        <input type="text" name="object_id" class="form-control"
+               value="{{ request.args.get('object_id', '') }}" placeholder="Search by ID">
+      </div>
+
+      <!-- Confidence + Flags -->
+      <div class="col-md-9 d-flex align-items-end flex-wrap">
+        <div class="me-3" style="min-width: 160px;">
+          <label class="form-label">Min Confidence</label>
+          <input type="number" name="min_confidence" class="form-control" step="0.01" min="0" max="1"
+                 value="{{ request.args.get('min_confidence', '') }}" placeholder="0.0-1.0">
+        </div>
+        <div class="me-3" style="min-width: 160px;">
+          <label class="form-label">Max Confidence</label>
+          <input type="number" name="max_confidence" class="form-control" step="0.01" min="0" max="1"
+                 value="{{ request.args.get('max_confidence', '') }}" placeholder="0.0-1.0">
+        </div>
+        <div class="form-check form-check-inline mt-4 me-3">
+          <input class="form-check-input" type="checkbox" name="reviewed_only" value="1" id="reviewed_only"
+                 {% if request.args.get('reviewed_only') == '1' %}checked{% endif %}>
+          <label class="form-check-label" for="reviewed_only">Reviewed</label>
+        </div>
+        <div class="form-check form-check-inline mt-4 me-3">
+          <input class="form-check-input" type="checkbox" name="flagged_only" value="1" id="flagged_only"
+                 {% if request.args.get('flagged_only') == '1' %}checked{% endif %}>
+          <label class="form-check-label" for="flagged_only">Flagged</label>
+        </div>
+        <div class="form-check form-check-inline mt-4">
+          <input class="form-check-input" type="checkbox" name="unannotated_only" value="1" id="unannotated_only"
+                 {% if request.args.get('unannotated_only') == '1' %}checked{% endif %}>
+          <label class="form-check-label" for="unannotated_only">Unannotated</label>
+        </div>
+      </div>
+
+      <!-- Pagination Controls -->
+      <div class="col-md-2">
+        <label class="form-label">Page</label>
+        <input type="number" name="page" class="form-control" min="1" value="{{ request.args.get('page', 1) }}">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Limit</label>
+        <input type="number" name="limit" class="form-control" min="10" value="{{ request.args.get('limit', 100) }}">
+      </div>
+
+      <!-- Buttons -->
+      <div class="col-md-12 mt-2">
+        <div class="row g-2">
+          <div class="col-md-3">
+            <button type="submit" class="btn btn-primary w-100">Apply Filters</button>
+          </div>
+          <div class="col-md-3">
+            <a href="{{ url_for('gallery') }}" class="btn btn-secondary w-100">Clear Filters</a>
+          </div>
+          <div class="col-md-3">
+            <form method="GET" action="{{ url_for('gallery') }}" onsubmit="return confirm('Download all shown snapshots as a ZIP?')">
+              {% for name, val in request.args.items() %}
+                <input type="hidden" name="{{ name }}" value="{{ val }}">
+              {% endfor %}
+              <input type="hidden" name="download" value="1">
+              <button type="submit" class="btn btn-primary w-100">Download ZIP</button>
+            </form>
+          </div>
+          <div class="col-md-3">
+            <form method="GET" action="{{ url_for('export_filtered_pdf') }}">
+              {% for name, val in request.args.items() %}
+                <input type="hidden" name="{{ name }}" value="{{ val }}">
+              {% endfor %}
+              <button type="submit" class="btn btn-primary w-100">Download PDF</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Gallery -->
+{% if snapshots %}
+<div class="row row-cols-1 row-cols-md-3 row-cols-lg-4 g-4" id="galleryContainer">
+    {% for snap in snapshots %}
+    <div class="col" data-snapshot="{{ snap.filename }}">
+        <div class="card h-100">
+            <div class="position-relative">
+                <div class="gallery-image-container" 
+                     data-image="/snapshots/{{ snap.filename }}"
+                     data-title="{{ snap.type }} Detection"
+                     data-type="{{ snap.type }}"
+                     data-speed="{{ snap.speed }}"
+                     data-distance="{{ snap.distance }}"
+                     data-direction="{{ snap.direction }}"
+                     data-motion_state="{{ snap.motion_state }}"
+                     data-datetime="{{ snap.datetime }}"
+                     data-filename="{{ snap.filename }}"
+                     data-object-id="{{ snap.object_id or '' }}"
+                     data-confidence="{{ snap.confidence or '' }}"
+                     data-reviewed="{{ snap.reviewed | string | lower }}"
+                     data-flagged="{{ snap.flagged|lower }}"
+                     style="cursor: pointer;">
+                    <img src="/snapshots/{{ snap.filename }}" class="card-img-top"
+                         style="height: 200px; object-fit: cover;" alt="{{ snap.type }} Detection - {{ snap.datetime }}">
+                </div>
+                <span class="position-absolute top-0 end-0 m-2 badge bg-{{ 'danger' if snap.speed > 2 else 'warning' if snap.speed > 1 else 'success' }}">
+                    {{ snap.speed }} km/h
+                </span>
+                {% set confidence = snap.confidence if snap.confidence is not none else 0 %}
+                {% if confidence %}
+                <span class="position-absolute top-0 start-0 m-2 badge bg-info">
+                    {{ (confidence * 100)|round(0)|int }}%
+                </span>
+                {% endif %}
+            </div>
+            <div class="card-body p-2">
+                <h6 class="card-title mb-1">{{ snap.type }}</h6>
+                <small class="text-muted d-block">{{ snap.datetime }}</small>
+                <div class="mt-2">
+                    <small class="d-block">Direction: {{ snap.direction|default("N/A")|title }}</small>
+                    {% if snap.motion_state %}
+                    <small class="d-block">Motion: {{ snap.motion_state|default("N/A")|title }}</small>
+                    {% endif %}
+                    <small class="d-block">Confidence:</small>
+                    <div class="progress" style="height: 6px;">
+                    <div class="progress-bar 
+                                {% if confidence > 0.85 %}bg-success
+                                {% elif confidence > 0.5 %}bg-warning
+                                {% else %}bg-danger{% endif %}" 
+                        role="progressbar"
+                        style="width: {{ (confidence * 100)|round(0)|int }}%;">
+                    </div>
+                    </div>
+                    {% if snap.object_id %}
+                    <small class="d-block">ID: {{ snap.object_id }}</small>
+                    {% endif %}
+                </div>
+                {% if current_user.is_authenticated %}
+                <div class="mt-2" data-snapshot-controls="{{ snap.filename }}">
+                    <button class="btn btn-sm {{ 'btn-success' if snap.reviewed else 'btn-outline-primary' }} me-1 mark-reviewed-btn"
+                            data-filename="{{ snap.filename }}"
+                            data-current-state="{{ snap.reviewed|lower }}">
+                        <span class="btn-text">{{ 'Unmark' if snap.reviewed else 'Mark Reviewed' }}</span>
+                        <span class="loading-spinner d-none">
+                            <span class="spinner-border spinner-border-sm" role="status"></span>
+                        </span>
+                    </button>
+                    <button class="btn btn-sm {{ 'btn-danger' if snap.flagged else 'btn-outline-warning' }} mark-flagged-btn"
+                            data-filename="{{ snap.filename }}"
+                            data-current-state="{{ snap.flagged|lower }}">
+                        <span class="btn-text">{{ 'Unflag' if snap.flagged else 'Flag' }}</span>
+                        <span class="loading-spinner d-none">
+                            <span class="spinner-border spinner-border-sm" role="status"></span>
+                        </span>
+                    </button>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Image Modal -->
+<div class="modal fade" id="imageModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="modalTitle">Detection Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-0">
+                <div class="row g-0">
+                    <div class="col-md-8">
+                        <img id="modalImage" src="" class="img-fluid w-100" alt="Detection Image" style="max-height: 70vh; object-fit: contain;">
+                    </div>
+                    <div class="col-md-4 p-3">
+                        <h6 class="fw-bold mb-3">Detection Information</h6>
+                        <div class="mb-2">
+                            <strong>Type:</strong> <span id="modalType"></span>
+                        </div>
+                        <div class="mb-2">
+                            <strong>Speed:</strong> <span id="modalSpeed"></span> km/h
+                        </div>
+                        <div class="mb-2">
+                            <strong>Distance:</strong> <span id="modalDistance"></span> m
+                        </div>
+                        <div class="mb-2">
+                            <strong>Direction:</strong> <span id="modalDirection"></span>
+                        </div>
+                        <div class="mb-2">
+                            <strong>Time:</strong> <span id="modalDatetime"></span>
+                        </div>
+                        <div class="mb-2" id="modalObjectIdRow" style="display: none;">
+                            <strong>Object ID:</strong> <span id="modalObjectId"></span>
+                        </div>
+                        <div class="mb-2" id="modalConfidenceRow" style="display: none;">
+                            <strong>Confidence:</strong> <span id="modalConfidence"></span>%
+                        </div>
+                        <div class="mb-2">
+                            <strong>Filename:</strong> <span id="modalFilename"></span>
+                        </div>
+                        <div class="mb-3">
+                            <strong>Status:</strong> <span id="modalStatus"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-success" id="downloadBtn">
+                    <i class="fas fa-download me-2"></i>Download
+                </button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Download Confirmation Modal -->
+<div class="modal fade" id="downloadConfirmModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Confirm Download</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to download a ZIP file containing <strong id="download-count"></strong> images?</p>
+                <p class="text-muted">This may take some time depending on the number of images.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-success" id="confirmDownloadBtn">
+                    <span class="btn-text">Yes, Download</span>
+                    <span class="loading-spinner d-none">
+                        <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                        Preparing...
+                    </span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Snapshot Count Info -->
+<div class="row mt-4">
+    <div class="col-12 text-center">
+        <p class="text-muted">
+            Showing {{ snapshots|length }} snapshots
+            {% if request.args.get('min_speed') or request.args.get('max_speed') or request.args.get('type') or request.args.get('direction') or request.args.get('reviewed_only') or request.args.get('flagged_only') %}
+                with applied filters
+            {% endif %}
+        </p>
+    </div>
+</div>
+{% else %}
+<div class="card">
+    <div class="card-body text-center py-5">
+        <h5>No Images Found</h5>
+        <p class="text-muted">Try adjusting your filters or check back later for new detections.</p>
+        <a href="{{ url_for('gallery') }}" class="btn btn-primary">Clear All Filters</a>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    let currentImageData = null;
+
+    // Image click handlers
+    document.querySelectorAll('.gallery-image-container').forEach(container => {
+        container.addEventListener('click', function() {
+            openImageModal(this);
+        });
+    });
+
+    // Mark button handlers
+    document.addEventListener('click', function(e) {
+        if (e.target.closest('.mark-reviewed-btn')) {
+            handleMarkAction(e.target.closest('.mark-reviewed-btn'), 'reviewed');
+        } else if (e.target.closest('.mark-flagged-btn')) {
+            handleMarkAction(e.target.closest('.mark-flagged-btn'), 'flagged');
+        }
+    });
+
+    // Download ZIP handler
+    document.getElementById('downloadZipBtn')?.addEventListener('click', function() {
+        showDownloadConfirmation();
+    });
+
+    document.getElementById('confirmDownloadBtn')?.addEventListener('click', function() {
+        handleZipDownload();
+    });
+
+    function openImageModal(container) {
+        // Get data from container
+        currentImageData = {
+            image: container.dataset.image,
+            title: container.dataset.title,
+            type: container.dataset.type,
+            speed: container.dataset.speed,
+            distance: container.dataset.distance,
+            direction: container.dataset.direction,
+            motion: container.dataset.motion,
+            datetime: container.dataset.datetime,
+            filename: container.dataset.filename,
+            objectId: container.dataset.objectId,
+            confidence: container.dataset.confidence,
+            reviewed: container.dataset.reviewed === 'true',
+            flagged: container.dataset.flagged === 'true'
+        };
+
+        // Populate modal
+        document.getElementById('modalTitle').textContent = currentImageData.title;
+        document.getElementById('modalImage').src = currentImageData.image;
+        document.getElementById('modalType').textContent = currentImageData.type;
+        document.getElementById('modalSpeed').textContent = currentImageData.speed;
+        document.getElementById('modalDistance').textContent = currentImageData.distance;
+        document.getElementById('modalDirection').textContent = currentImageData.direction.charAt(0).toUpperCase() + currentImageData.direction.slice(1);
+        document.getElementById('modalMotion').textContent = currentImageData.motion;
+        document.getElementById('modalDatetime').textContent = currentImageData.datetime;
+        document.getElementById('modalFilename').textContent = currentImageData.filename;
+
+        // Handle optional fields
+        if (currentImageData.objectId) {
+            document.getElementById('modalObjectId').textContent = currentImageData.objectId;
+            document.getElementById('modalObjectIdRow').style.display = 'block';
+        } else {
+            document.getElementById('modalObjectIdRow').style.display = 'none';
+        }
+
+        if (currentImageData.confidence !== undefined && currentImageData.confidence !== "") {
+            const confidencePercent = Math.round(parseFloat(currentImageData.confidence) * 100);
+            document.getElementById('modalConfidence').textContent = confidencePercent;
+            document.getElementById('modalConfidenceRow').style.display = 'block';
+        } else {
+            document.getElementById('modalConfidenceRow').style.display = 'none';
+        }
+
+        // Update status
+        updateModalStatus();
+
+        // Setup download button
+        setupDownloadButton();
+
+        // Show modal
+        const modal = new bootstrap.Modal(document.getElementById('imageModal'));
+        modal.show();
+    }
+
+    function updateModalStatus() {
+        const statusElement = document.getElementById('modalStatus');
+        let statusHTML = '';
+
+        if (currentImageData.reviewed) {
+            statusHTML += '<span class="badge bg-success me-2">Reviewed</span>';
+        }
+        if (currentImageData.flagged) {
+            statusHTML += '<span class="badge bg-danger me-2">Flagged</span>';
+        }
+        if (!currentImageData.reviewed && !currentImageData.flagged) {
+            statusHTML += '<span class="badge bg-secondary">Unprocessed</span>';
+        }
+
+        statusElement.innerHTML = statusHTML;
+    }
+
+    function setupDownloadButton() {
+        const downloadBtn = document.getElementById('downloadBtn');
+        downloadBtn.onclick = function() {
+            const link = document.createElement('a');
+            link.href = currentImageData.image;
+            link.download = currentImageData.filename;
+            link.click();
+        };
+    }
+
+    async function handleMarkAction(button, action) {
+        if (button.disabled) return;
+
+        const filename = button.dataset.filename;
+        const currentState = button.dataset.currentState === 'true';
+
+        // Show loading
+        showButtonLoading(button);
+
+        try {
+            const response = await fetch('/mark_snapshot', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: JSON.stringify({
+                    snapshot: filename,
+                    action: action
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const data = await response.json();
+
+            if (data.status === 'updated') {
+                updateButton(button, action, !currentState);
+                showAlert(`Snapshot ${currentState ? 'un' : ''}${action} successfully`, 'success');
+            } else {
+                throw new Error(data.message || 'Update failed');
+            }
+
+        } catch (error) {
+            console.error('Error:', error);
+            showAlert(`Failed to update snapshot: ${error.message}`, 'danger');
+        } finally {
+            hideButtonLoading(button);
+        }
+    }
+
+    function updateButton(button, action, newState) {
+        const textSpan = button.querySelector('.btn-text');
+
+        if (action === 'reviewed') {
+            if (newState) {
+                button.className = 'btn btn-sm btn-success me-1 mark-reviewed-btn';
+                textSpan.textContent = 'Unmark';
+            } else {
+                button.className = 'btn btn-sm btn-outline-primary me-1 mark-reviewed-btn';
+                textSpan.textContent = 'Mark Reviewed';
+            }
+        } else if (action === 'flagged') {
+            if (newState) {
+                button.className = 'btn btn-sm btn-danger mark-flagged-btn';
+                textSpan.textContent = 'Unflag';
+            } else {
+                button.className = 'btn btn-sm btn-outline-warning mark-flagged-btn';
+                textSpan.textContent = 'Flag';
+            }
+        }
+
+        button.dataset.currentState = newState.toString();
+    }
+
+    function showButtonLoading(button) {
+        const textSpan = button.querySelector('.btn-text');
+        const loadingSpan = button.querySelector('.loading-spinner');
+
+        textSpan.classList.add('d-none');
+        loadingSpan.classList.remove('d-none');
+        button.disabled = true;
+    }
+
+    function hideButtonLoading(button) {
+        const textSpan = button.querySelector('.btn-text');
+        const loadingSpan = button.querySelector('.loading-spinner');
+
+        textSpan.classList.remove('d-none');
+        loadingSpan.classList.add('d-none');
+        button.disabled = false;
+    }
+
+    function showDownloadConfirmation() {
+        const snapshotCount = document.querySelectorAll('[data-snapshot]').length;
+        document.getElementById('download-count').textContent = snapshotCount;
+
+        const modal = new bootstrap.Modal(document.getElementById('downloadConfirmModal'));
+        modal.show();
+    }
+
+    async function handleZipDownload() {
+        const confirmBtn = document.getElementById('confirmDownloadBtn');
+        showButtonLoading(confirmBtn);
+
+        try {
+            const currentUrl = new URL(window.location);
+            currentUrl.searchParams.set('download', '1');
+
+            const link = document.createElement('a');
+            link.href = currentUrl.toString();
+            link.click();
+
+            setTimeout(() => {
+                const modal = bootstrap.Modal.getInstance(document.getElementById('downloadConfirmModal'));
+                modal.hide();
+            }, 1000);
+
+        } catch (error) {
+            console.error('Download error:', error);
+            showAlert('Download failed. Please try again.', 'danger');
+        } finally {
+            hideButtonLoading(confirmBtn);
+        }
+    }
+
+    function showAlert(message, type) {
+        // Remove existing alerts
+        document.querySelectorAll('.alert.position-fixed').forEach(alert => alert.remove());
+
+        const alertDiv = document.createElement('div');
+        alertDiv.className = `alert alert-${type} alert-dismissible fade show position-fixed`;
+        alertDiv.style.cssText = 'top: 80px; right: 20px; z-index: 9999; min-width: 300px;';
+        alertDiv.innerHTML = `
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+
+        document.body.appendChild(alertDiv);
+
+        setTimeout(() => {
+            if (alertDiv.parentNode) {
+                alertDiv.remove();
+            }
+        }, 5000);
+    }
+});
+</script>
+{% endblock %}

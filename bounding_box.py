@@ -5,88 +5,75 @@ from threading import Thread
 import numpy as np
 
 try:
-    model = YOLO("human_vehicel_weight.pt")
+    model = YOLO("yolov8s.pt")
     print("[INFO] Custom model loaded successfully.")
 except Exception as e:
     print(f"[ERROR] Failed to load model: {e}")
     model = None
 
-def estimate_distance_from_box(bbox, frame_width):
+def estimate_distance_from_box(bbox, frame_height):
     x1, y1, x2, y2 = bbox
-    box_width = x2 - x1
-    if box_width <= 0:
+    box_height = y2 - y1
+    if box_height <= 0:
         return 0.0
-    ref_width_px = 150
-    ref_distance_m = 3.0
-    return (ref_width_px / box_width) * ref_distance_m
+    real_height_m = 1.7
+    focal_length_px = 650  
+
+    distance = (real_height_m * focal_length_px) / box_height
+    return min(distance, 20.0)
 
 def annotate_speeding_object(image_path, radar_distance, label=None, save_dir="snapshots",
-                             min_confidence=0.5, obj_x=0.0, obj_y=1.0):
+                             min_confidence=0.3, obj_x=0.0, obj_y=1.0):
     print(f"[DEBUG] Annotating snapshot: {image_path}")
     img = cv2.imread(image_path)
-
     if img is None:
         print(f"[ERROR] Failed to read image: {image_path}")
         return None, None, None
 
     results = model(source=img, imgsz=640)[0]
     h, w = img.shape[:2]
-    visual_dist = 0.0
     best_box = None
     best_score = float("inf")
 
-    allowed_classes = {"human", "person", "car", "truck", "bus", "bike", "vehicle"}
-
-    # Radar azimuth in degrees (camera and radar aligned)
-    azimuth_deg = np.degrees(np.arctan2(obj_x, obj_y))  # x is lateral, y is forward
-    camera_fov_deg = 90
-    image_center_x = w / 2
-    pixel_from_azimuth = image_center_x + (azimuth_deg / (camera_fov_deg / 2)) * image_center_x
+    azimuth_deg = np.degrees(np.arctan2(obj_x, obj_y))
+    pixel_from_azimuth = (w / 2) + (azimuth_deg / 45.0) * (w / 2)  # 90° FOV assumption
 
     for box in results.boxes:
         cls_id = int(box.cls)
-        conf = float(box.conf[0])
         class_name = model.names[cls_id].lower()
+        conf = float(box.conf[0])
 
-        if conf < min_confidence or class_name not in allowed_classes:
+        if class_name not in {"person", "car", "truck", "bus", "bicycle", "motorbike"}:
+            continue
+        if conf < min_confidence:
             continue
 
         x1, y1, x2, y2 = map(int, box.xyxy[0])
-        vis_dist = estimate_distance_from_box((x1, y1, x2, y2), frame_width=w)
-        bbox_center_x = (x1 + x2) / 2
-        score = abs(bbox_center_x - pixel_from_azimuth)
+        bbox_w = x2 - x1
+        bbox_h = y2 - y1
+        if bbox_w < 20 or bbox_h < 20:
+            continue
 
-        if score < best_score:
-            best_score = score
-            best_box = {
-                "bbox": (x1, y1, x2, y2),
-                "class_name": class_name,
-                "conf": conf,
-                "vis_dist": vis_dist
-            }
+        bbox_center = (x1 + x2) / 2
+        angle_score = abs(bbox_center - pixel_from_azimuth)
+
+        if angle_score < best_score:
+            best_score = angle_score
+            best_box = (x1, y1, x2, y2, class_name, conf)
 
     if best_box:
-        x1, y1, x2, y2 = best_box["bbox"]
-        class_name = best_box["class_name"]
-        conf = best_box["conf"]
-        visual_dist = min(best_box["vis_dist"], 12.0)
-
-        if (x2 - x1) > 0.4 * w:
-            radar_distance = min(radar_distance, visual_dist)
-
-        label_text = f"{class_name.upper()} ({conf:.2f}) | radar={radar_distance:.1f}m | visual={visual_dist:.1f}m"
+        x1, y1, x2, y2, class_name, conf = best_box
+        cv2.rectangle(img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+        label_text = f"{class_name.upper()} ({conf:.2f}) | R={radar_distance:.1f}m"
         if label:
             label_text += f" | {label}"
+        cv2.putText(img, label_text, (x1, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
+        cv2.imwrite(image_path, img)
+        print(f"[DEBUG] Annotated: {class_name}, angle_score={best_score:.2f}")
+        return image_path, radar_distance, radar_distance
 
-        cv2.rectangle(img, (x1, y1), (x2, y2), (0, 0, 255), 2)
-        cv2.putText(img, label_text, (x1, y1 - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-        print(f"[DEBUG] Annotated {class_name} @ radar={radar_distance:.1f}m, azimuth={azimuth_deg:.1f}°, pixel={pixel_from_azimuth:.0f}")
-    else:
-        print("[DEBUG] No relevant bounding box detected")
-
-    cv2.imwrite(image_path, img)
-    return image_path, visual_dist, radar_distance
+    print("[DEBUG] No valid bounding box matched.")
+    return None, None, None
 
 def annotate_async(image_path, radar_distance, label=None, save_dir="snapshots", min_confidence=0.5, obj_x=0.0, obj_y=1.0):
     def _run():
