@@ -39,8 +39,10 @@ from requests.auth import HTTPDigestAuth
 
 # External models + tools
 import lightgbm as lgb
+import re
 import psycopg2
 import psycopg2.extras
+from psycopg2.extras import Json, DictCursor
 from sklearn.preprocessing import StandardScaler
 from matplotlib import pyplot as plt
 import joblib
@@ -54,6 +56,8 @@ from iwr6843_interface import IWR6843Interface, check_radar_connection
 from classify_objects import ObjectClassifier
 from kalman_filter_tracking import ObjectTracker
 from camera import capture_snapshot
+from calibration import run_calibration
+from projection import fit_projection_matrix
 from bounding_box import annotate_speeding_object
 from report import generate_pdf_report
 from train_lightbgm import fetch_training_data 
@@ -163,20 +167,72 @@ def get_db_connection():
         if conn:
             conn.close()
 
-def save_model_metadata(version, features, accuracy, labels):
+def _ensure_model_metadata_schema():
     with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO model_metadata (version, features, accuracy, labels)
-            VALUES (%s, %s, %s, %s)
-        """, (version, features, accuracy, labels))
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS model_metadata (
+                id SERIAL PRIMARY KEY,
+                version TEXT NOT NULL,
+                features JSONB,
+                accuracy DOUBLE PRECISION,
+                labels JSONB,
+                trained_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
         conn.commit()
 
-def get_latest_model_metadata():
+def _to_py_scalar(x):
+    """Convert numpy scalars/odd types into JSON/DB-safe Python scalars/strings."""
+    try:
+        import numpy as _np
+        if isinstance(x, _np.generic):
+            return x.item()
+    except Exception:
+        pass
+    if isinstance(x, (bytes, bytearray)):
+        return x.decode("utf-8", "ignore")
+    # keep primitives as-is; stringify everything else
+    return x if isinstance(x, (str, int, float, bool)) else str(x)
+
+def _jsonify_list(seq):
+    """Return a list that json.dumps can handle (no numpy, no bytes)."""
+    if not seq:
+        return []
+    return [_to_py_scalar(v) for v in seq]
+
+def save_model_metadata_db(version, features, accuracy, labels):
+    """Authoritative metadata table: version, features, accuracy, labels."""
+    _ensure_model_metadata_schema()
+    # make lists JSON-serializable
+    features = _jsonify_list(features)
+    labels   = _jsonify_list(labels)
     with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-        cursor.execute("SELECT * FROM model_metadata ORDER BY trained_at DESC LIMIT 1")
-        return cursor.fetchone()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO model_metadata (version, features, accuracy, labels)
+            VALUES (%s, %s, %s, %s)
+        """, (version, Json(features), accuracy, Json(labels)))
+        conn.commit()
+
+def get_latest_model_metadata_db():
+    _ensure_model_metadata_schema()
+    with get_db_connection() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cur.execute("SELECT * FROM model_metadata ORDER BY trained_at DESC LIMIT 1")
+        return cur.fetchone()
+
+def _next_model_version():
+    _ensure_model_metadata_schema()
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT version FROM model_metadata ORDER BY trained_at DESC LIMIT 1")
+        row = cur.fetchone()
+    if row and row[0]:
+        m = re.match(r"^v(\d+)$", str(row[0]).strip())
+        if m:
+            return f"v{int(m.group(1)) + 1}"
+    return "v1"
 
 def save_cameras_to_db(cameras, selected_idx):
     with get_db_connection() as conn:
@@ -216,19 +272,14 @@ def load_cameras_from_db():
         return cameras, selected
 
 def update_user_activity(user_id):
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO user_activity (user_id, last_activity)
-                VALUES (%s, %s)
-                ON CONFLICT (user_id)
-                DO UPDATE SET last_activity = EXCLUDED.last_activity
-            """, (user_id, datetime.utcnow()))
-            conn.commit()
-    except Exception as e:
-        logger.error(f"[USER ACTIVITY] Update failed: {e}")
-
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO user_activity (user_id, last_activity)
+            VALUES (%s, NOW())
+            ON CONFLICT (user_id) DO UPDATE SET last_activity = EXCLUDED.last_activity
+        """, (user_id,))
+        conn.commit()
 
 def get_active_users(minutes=30):
     try:
@@ -303,19 +354,21 @@ def validate_snapshots():
         logger.error(f"[SNAPSHOT VALIDATOR ERROR] {e}")
         return 0
 
-def save_model_metadata(accuracy, method):
-    """Store model training results"""
+def save_model_info(accuracy, method):
+    """Store model training results for the UI (and change delta)."""
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("INSERT INTO model_info (accuracy, method, updated_at) VALUES (%s, %s, %s)",
-                           (accuracy, method, datetime.now()))
+            cursor.execute(
+                "INSERT INTO model_info (accuracy, method, updated_at) VALUES (%s, %s, %s)",
+                (accuracy, method, datetime.now())
+            )
             conn.commit()
     except Exception as e:
         logger.error(f"[MODEL INFO SAVE ERROR] {e}")
 
 def get_model_metadata():
-    """Return latest two model metadata entries with change calculation"""
+    """UI helper (keeps existing contract): latest + change from model_info."""
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
@@ -325,7 +378,7 @@ def get_model_metadata():
                 return None
             latest = rows[0]
             prev = rows[1] if len(rows) > 1 else None
-            change = (latest['accuracy'] - prev['accuracy']) if prev else None
+            change = (latest['accuracy'] - prev['accuracy']) if (prev and latest['accuracy'] is not None and prev['accuracy'] is not None) else None
             return {
                 "accuracy": latest['accuracy'],
                 "updated_at": latest['updated_at'].strftime("%Y-%m-%d %H:%M:%S"),
@@ -335,6 +388,78 @@ def get_model_metadata():
     except Exception as e:
         logger.error(f"[MODEL INFO LOAD ERROR] {e}")
         return None
+    
+# ---- MJPEG helpers ----
+def _shared_static(filename: str) -> str:
+    """Resolve a shared static directory (writer == reader)."""
+    base = os.environ.get("ISK_STATIC_DIR", os.path.join(os.path.dirname(__file__), "static"))
+    os.makedirs(base, exist_ok=True)
+    return os.path.join(base, filename)
+
+def _resolve_heatmap_path() -> str:
+    """
+    Prefer a full composite 'heatmap_3d.png' if present; otherwise fall back to
+    any of the plane projections the plotter leaves: xy/xz/yz.
+    """
+    candidates = ("heatmap_3d.png", "heatmap_xy.png", "heatmap_xz.png", "heatmap_yz.png")
+    for name in candidates:
+        p = _shared_static(name)
+        try:
+            if os.path.exists(p) and os.path.getsize(p) > 0:
+                return p
+        except Exception:
+            pass
+            # last resort: point at the nominal 3d name (streamer will show fallback frame until it appears)
+    return _shared_static("heatmap_3d.png")
+
+def _mjpeg_stream_from(path, fps=2):
+    """Stream a single image file (PNG/JPEG) as MJPEG, with retry + caching."""
+    interval = 1.0 / max(fps, 1)
+    last_mtime = None
+    last_frame = b""
+
+    def _frame_bytes():
+        nonlocal last_mtime, last_frame
+        # Try a few times to ride out atomic swaps & FS lag
+        for _ in range(3):
+            try:
+                mtime = os.path.getmtime(path)
+                # If unchanged and we have a cached frame, reuse it
+                if last_mtime == mtime and last_frame:
+                    return last_frame
+                img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+                if img is None or img.size == 0:
+                    time.sleep(0.05)
+                    continue
+                # Normalize channels so JPEG encode always works
+                if img.ndim == 3 and img.shape[2] == 4:      # BGRA -> BGR
+                    img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+                elif img.ndim == 2:                          # Gray -> BGR
+                    img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+                ok, buf = cv2.imencode(".jpg", img)
+                if ok:
+                    last_mtime = mtime
+                    last_frame = bytes(buf)
+                    return last_frame
+            except Exception:
+                time.sleep(0.05)
+        # Fallback: small gray frame so the stream keeps flowing
+        try:
+            fallback = (np.ones((240, 320, 3), dtype=np.uint8) * 24)
+            ok, buf = cv2.imencode(".jpg", fallback)
+            if ok:
+                return bytes(buf)
+        except Exception:
+            pass
+        return b""
+
+    def _gen():
+        while True:
+            frame = _frame_bytes()
+            yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
+            time.sleep(interval)
+
+    return Response(_gen(), mimetype="multipart/x-mixed-replace; boundary=frame")
     
 def create_app():
     """Application factory pattern"""
@@ -383,39 +508,27 @@ def create_app():
         logger.error(traceback.format_exc())
         return render_template('errors.html', message="Internal error", error_code=500), 500
     
-    @app.route("/heatmap_feed")
-    @login_required
+    @app.route('/heatmap_feed')
     def heatmap_feed():
-        def generate_heatmap_frame():
-            with plotter.lock:
-                fig = plotter.heatmap_fig or plotter.fig
-                canvas = FigureCanvas(fig)
-                buf = io.BytesIO()
-                canvas.print_jpeg(buf)
-                return buf.getvalue()
+        return Response(_mjpeg_stream_from('static/heatmap_3d.png', fps=2),
+                        mimetype='multipart/x-mixed-replace; boundary=frame')
 
-        def generate():
-            while True:
-                try:
-                    frame = generate_heatmap_frame()
-                    yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
-                    time.sleep(1.0)
-                except Exception as e:
-                    logger.error(f"[HEATMAP_FEED] Frame error: {e}")
-                    time.sleep(1.0)
-
-        return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
+    @app.route('/scatter_feed')
+    def scatter_feed():
+        return Response(_mjpeg_stream_from('static/scatter_3d.png', fps=2),
+                        mimetype='multipart/x-mixed-replace; boundary=frame')
 
     @app.route("/camera_feed")
     @login_required
     def camera_feed():
         def generate_heatmap_frame():
-            with plotter.lock:
-                fig = plotter.heatmap_fig or plotter.fig  
-                canvas = FigureCanvas(fig)
-                buf = io.BytesIO()
-                canvas.print_jpeg(buf)
-                return buf.getvalue()
+            try:
+                with open(_resolve_heatmap_path(), "rb") as f:
+                    return f.read()
+            except Exception:
+                img = (np.ones((240, 320, 3), dtype=np.uint8) * 16)
+                _, buf = cv2.imencode(".jpg", img)
+                return bytes(buf)
 
         def generate():
             try:
@@ -445,7 +558,7 @@ def create_app():
                         while True:
                             frame = generate_heatmap_frame()
                             yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
-                            time.sleep(1.0)
+                            time.sleep(0.5)
 
                     return Response(heatmap_stream(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
@@ -735,8 +848,9 @@ def create_app():
 
                 # Get recent detections 
                 cursor.execute("""
-                    SELECT datetime, type, speed_kmh, distance, direction, motion_state, snapshot_type,
-                           snapshot_path, object_id, confidence
+                    SELECT datetime, type, speed_kmh, distance, direction, motion_state,
+                        snapshot_type, snapshot_path, object_id, confidence,
+                        azimuth, elevation
                     FROM radar_data 
                     WHERE snapshot_path IS NOT NULL
                     ORDER BY datetime DESC
@@ -775,6 +889,9 @@ def create_app():
                         "type": r['type'] or "UNKNOWN",
                         "speed": round(float(r['speed_kmh']) if r['speed_kmh'] is not None else 0, 2),
                         "distance": round(float(r['distance']) if r['distance'] is not None else 0, 2),
+                        "azimuth": round(float(r['azimuth']) if r['azimuth'] is not None else 0, 2),
+                        "elevation": round(float(r['elevation']) if r['elevation'] is not None else 0, 2),
+                        "motion_state": r['motion_state'] or "N/A",
                         "direction": r['direction'] or "N/A",
                         "image": os.path.basename(r['snapshot_path']) if r['snapshot_path'] else None,
                         "object_id": r['object_id'] or "N/A",
@@ -954,15 +1071,11 @@ def create_app():
         max_speed = float(request.args.get("max_speed") or 999)
         direction = request.args.get("direction", "").lower()
         motion_state = request.args.get("motion_state", "").lower()
-        snapshot_type = request.args.get("snapshot_type", "").lower()
         object_id = request.args.get("object_id", "")
         start_date = request.args.get("start_date", "")
         end_date = request.args.get("end_date", "")
         min_confidence = float(request.args.get("min_confidence") or 0)
         max_confidence = float(request.args.get("max_confidence") or 1)
-        reviewed_only = request.args.get("reviewed_only") == "1"
-        flagged_only = request.args.get("flagged_only") == "1"
-        unannotated_only = request.args.get("unannotated_only") == "1"
         download = request.args.get("download", "0") == "1"
         page = int(request.args.get("page", 1))
         limit = int(request.args.get("limit", 100))
@@ -971,7 +1084,6 @@ def create_app():
             with get_db_connection() as conn:
                 cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
-                # 1. Build Filter Query
                 filters = ["snapshot_path IS NOT NULL"]
                 params = []
 
@@ -987,9 +1099,6 @@ def create_app():
                 if motion_state:
                     filters.append("LOWER(COALESCE(motion_state, '')) LIKE %s")
                     params.append(f"%{motion_state}%")
-                if snapshot_type:
-                    filters.append("LOWER(COALESCE(snapshot_type, '')) = %s")
-                    params.append(snapshot_type)
                 if object_id:
                     filters.append("COALESCE(object_id, '') LIKE %s")
                     params.append(f"%{object_id}%")
@@ -1002,27 +1111,22 @@ def create_app():
                 if min_confidence > 0 or max_confidence < 1:
                     filters.append("confidence BETWEEN %s AND %s")
                     params.extend([min_confidence, max_confidence])
-                if reviewed_only:
-                    filters.append("reviewed = 1")
-                if flagged_only:
-                    filters.append("flagged = 1")
-                if unannotated_only:
-                    filters.append("reviewed = 0 AND flagged = 0")
 
                 where_clause = " AND ".join(filters)
 
-                # 2. Count total
+                # Count total
                 cursor.execute(f"SELECT COUNT(*) FROM radar_data WHERE {where_clause}", params)
                 total_items = cursor.fetchone()[0]
 
-                # 3. Pagination
+                # Pagination
                 offset, _, total_pages, current_page = apply_pagination(total_items, page, limit)
 
-                # 4. Query Data
+                # Query Data
                 query = f"""
-                    SELECT datetime, type, speed_kmh, distance, direction, motion_state,
-                        snapshot_path, object_id, confidence, reviewed, flagged,
-                        snapshot_status, snapshot_type
+                    SELECT datetime, timestamp, object_id, type, confidence, speed_kmh,
+                        distance, direction, motion_state,
+                        snapshot_path, snapshot_status,
+                        azimuth, elevation
                     FROM radar_data
                     WHERE {where_clause}
                     ORDER BY COALESCE(datetime::TIMESTAMP, to_timestamp(timestamp)) DESC
@@ -1031,28 +1135,29 @@ def create_app():
                 cursor.execute(query, params + [limit, offset])
                 rows = cursor.fetchall()
 
-                # 5. Format Results
                 snapshots = []
                 for r in rows:
-                    snapshot_data = {
-                        "filename": os.path.basename(r["snapshot_path"]) if r["snapshot_path"] else "no_image.jpg",
+                    path = r["snapshot_path"]
+                    valid_path = path if path and isinstance(path, str) and os.path.isfile(path) else None
+
+                    snapshots.append({
+                        "filename": os.path.basename(path) if path else "no_image.jpg",
                         "datetime": r["datetime"] or "N/A",
                         "type": r["type"] or "UNKNOWN",
                         "speed": round(float(r["speed_kmh"] or 0), 2),
                         "distance": round(float(r["distance"] or 0), 2),
+                        "azimuth": round(float(r["azimuth"] or 0), 2),
+                        "elevation": round(float(r["elevation"] or 0), 2),
                         "direction": r["direction"] or "N/A",
                         "motion_state": r["motion_state"] or "N/A",
                         "object_id": r["object_id"] or "N/A",
                         "confidence": round(float(r["confidence"] or 0), 2),
-                        "reviewed": bool(r["reviewed"]),
-                        "flagged": bool(r["flagged"]),
                         "snapshot_status": r["snapshot_status"] or "valid",
-                        "snapshot_type": r["snapshot_type"] or "auto",
-                        "path": r["snapshot_path"] if r["snapshot_path"] and os.path.exists(r["snapshot_path"]) else None
-                    }
-                    snapshots.append(snapshot_data)
+                        "snapshot_type": r.get("snapshot_type", "auto"),
+                        "path": valid_path
+                    })
 
-                # 6. Download ZIP
+                # Download ZIP
                 if download and snapshots:
                     buffer = BytesIO()
                     with zipfile.ZipFile(buffer, 'w') as zipf:
@@ -1068,8 +1173,10 @@ def create_app():
                     buffer.seek(0)
                     return send_file(buffer, mimetype='application/zip', as_attachment=True,
                                     download_name="filtered_snapshots.zip")
-
-                # 7. Render page
+                
+                print(f"[DEBUG] Total items: {total_items}, Offset: {offset}, Page: {current_page}/{total_pages}")
+                print(f"[DEBUG] Rows fetched: {len(rows)}")
+                print(f"[DEBUG] Snapshots prepared: {len(snapshots)}")
                 return render_template("gallery.html",
                                     snapshots=snapshots,
                                     current_page=current_page,
@@ -1079,11 +1186,14 @@ def create_app():
             logger.error(f"[GALLERY ERROR] {e}")
             logger.error(traceback.format_exc())
             flash("Error loading gallery data", "error")
-            logger.info(f"[GALLERY DEBUG] Rendering {len(snapshots)} snapshots, current_page={current_page}, total_pages={total_pages}")
-            for i, s in enumerate(snapshots[:3]):
-                logger.info(f"[SNAPSHOT {i}] {s}")
+            tb = traceback.format_exc()
+            print("[GALLERY ERROR]", e)
+            print(tb)
 
-            return render_template("gallery.html", snapshots=snapshots or [], current_page=current_page or 1, total_pages=total_pages or 1)
+            return render_template("gallery.html",
+                                snapshots=[],
+                                current_page=1,
+                                total_pages=1)
         
     @app.route("/mark_snapshot", methods=["POST"])
     @login_required
@@ -1114,6 +1224,32 @@ def create_app():
             logger.error(f"Error marking snapshot: {e}")
             return jsonify({"error": "Internal server error"}), 500
     
+    @app.route("/delete_snapshot/<filename>", methods=["DELETE"])
+    @login_required
+    def delete_snapshot(filename):
+        if not is_admin():
+            return jsonify({"success": False, "error": "Unauthorized"}), 403
+
+        try:
+            # File path
+            file_path = os.path.join(SNAPSHOT_FOLDER, filename)
+
+            # Remove from database
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM radar_data WHERE snapshot_path LIKE %s", (f"%{filename}%",))
+                conn.commit()
+
+            # Remove file
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+            return jsonify({"success": True})
+
+        except Exception as e:
+            logger.error(f"[DELETE SNAPSHOT ERROR] {e}")
+            return jsonify({"success": False, "error": str(e)}), 500
+
     @app.route("/snapshots/<filename>")
     @login_required
     def serve_snapshot(filename):
@@ -1130,11 +1266,11 @@ def create_app():
                 cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
                 cursor.execute("""
                     SELECT datetime, sensor, object_id, type, confidence, speed_kmh, velocity, distance,
-                        direction, motion_state, signal_level, doppler_frequency, reviewed, flagged, snapshot_path, snapshot_type
+                        direction, motion_state, signal_level, doppler_frequency,
+                        reviewed, flagged, snapshot_path, snapshot_type
                     FROM radar_data
-                    WHERE snapshot_path IS NOT NULL
+                    WHERE snapshot_path IS NOT NULL AND snapshot_path <> ''
                     ORDER BY datetime DESC
-                    LIMIT 100
                 """)
                 rows = cursor.fetchall()
 
@@ -1149,7 +1285,7 @@ def create_app():
                 "total_records": len(data),
                 "manual_snapshots": snapshot_types.count("manual"),
                 "auto_snapshots": snapshot_types.count("auto"),
-                "avg_speed": round(sum(speeds)/len(speeds), 2) if speeds else 0.0,
+                "avg_speed": round(sum(speeds) / len(speeds), 2) if speeds else 0.0,
                 "top_speed": max(speeds) if speeds else 0.0,
                 "lowest_speed": min(speeds) if speeds else 0.0,
                 "most_detected_object": Counter(types).most_common(1)[0][0] if types else "N/A",
@@ -1161,7 +1297,7 @@ def create_app():
             }
 
             try:
-                response = requests.get("http://127.0.0.1:5000/api/charts")
+                response = requests.get("http://127.0.0.1:5000/api/charts", timeout=3)
                 charts = response.json() if response.ok else {}
             except Exception as e:
                 logger.warning(f"[CHART FETCH ERROR] {e}")
@@ -1179,6 +1315,7 @@ def create_app():
             logger.error(f"[EXPORT_PDF_ERROR] {e}")
             return str(e), 500
 
+
     @app.route("/export_filtered_pdf")
     @login_required
     def export_filtered_pdf():
@@ -1188,9 +1325,10 @@ def create_app():
 
             query = """
                 SELECT datetime, sensor, object_id, type, confidence, speed_kmh, velocity, distance,
-                    direction, signal_level, doppler_frequency, reviewed, flagged, snapshot_path, snapshot_type
+                    direction, motion_state, signal_level, doppler_frequency,
+                    reviewed, flagged, snapshot_path, snapshot_type
                 FROM radar_data
-                WHERE snapshot_path IS NOT NULL
+                WHERE snapshot_path IS NOT NULL AND snapshot_path <> ''
             """
             sql_params = []
 
@@ -1258,7 +1396,8 @@ def create_app():
             if params.get("unannotated_only") == "1":
                 query += " AND reviewed = 0 AND flagged = 0"
 
-            query += " ORDER BY datetime DESC LIMIT 1000"
+            # No LIMIT — return complete filtered set
+            query += " ORDER BY datetime DESC"
 
             with get_db_connection() as conn:
                 cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
@@ -1288,7 +1427,7 @@ def create_app():
 
             charts = {}
             try:
-                resp = requests.get("http://127.0.0.1:5000/api/charts?days=0")
+                resp = requests.get("http://127.0.0.1:5000/api/charts?days=0", timeout=3)
                 if resp.ok:
                     charts = resp.json()
             except Exception as e:
@@ -1316,26 +1455,60 @@ def create_app():
             logger.info("[MODEL] Retraining LightGBM model from DB...")
             result = subprocess.run(["python3", "train_lightbgm.py"], capture_output=True, text=True)
 
-            if result.returncode == 0:
-                logger.info("[MODEL] Retraining completed successfully.")
-                acc = None
-                for line in result.stdout.splitlines():
-                    if "ACCURACY:" in line:
-                        try:
-                            acc = float(line.strip().split("ACCURACY:")[1].strip())
-                            save_model_metadata(acc, "retrain")
-                            break
-                        except Exception as e:
-                            logger.warning(f"Could not parse accuracy: {e}")
-                return jsonify({"status": "ok", "message": "Model retrained successfully."})
-            else:
+            logger.debug(f"[MODEL] Trainer STDOUT:\n{result.stdout}")
+            logger.debug(f"[MODEL] Trainer STDERR:\n{result.stderr}")
+
+            if result.returncode != 0:
                 logger.error(f"[MODEL] Retrain failed: {result.stderr}")
                 return jsonify({"error": "Retraining failed", "details": result.stderr}), 500
 
-        except Exception as e:
-            logger.exception("[RETRAIN ERROR]")
-            return jsonify({"error": "Internal server error."}), 500
+            # Parse accuracy like: ACCURACY: 0.9321
+            acc = None
+            m = re.search(r"ACCU?RACY\s*:\s*([0-9]*\.?[0-9]+)", result.stdout, flags=re.IGNORECASE)
+            if m:
+                try:
+                    acc = float(m.group(1))
+                except Exception as e:
+                    logger.warning(f"[MODEL] Could not parse accuracy: {e}")
 
+            # Load saved model → extract classes/features (may not exist if trainer didn’t save)
+            labels, features = [], []
+            try:
+                model, scaler = joblib.load("radar_lightgbm_model.pkl")
+                labels   = list(getattr(model, "classes_", []) or [])
+                features = list(getattr(model, "feature_name_", []) or [])
+            except Exception as e:
+                logger.warning(f"[MODEL] Could not read model classes/features: {e}")
+
+            # Make both JSON-safe (avoid numpy types in JSONB)
+            labels   = _jsonify_list(labels)
+            features = _jsonify_list(features)
+            if not features:
+                # reasonable fallback if the model didn’t store names
+                features = ["speed_kmh","distance","velocity","signal_level","doppler_frequency"]
+
+            version = _next_model_version()
+            logger.info(f"[MODEL] Saving metadata: version={version}, acc={acc}, labels={len(labels)}, features={len(features)}")
+
+            # 1) Authoritative table
+            save_model_metadata_db(version, features, acc, labels)
+            # 2) UI “change” table (this already wraps its own exceptions)
+            save_model_info(acc, "retrain")
+            # 3) Sidecar JSON (best-effort cache)
+            save_model_sidecar(acc, "retrain")
+
+            return jsonify({
+                "status": "ok",
+                "message": "Model retrained successfully.",
+                "accuracy": acc,
+                "version": version,
+                "labels": labels
+            })
+
+        except Exception as e:
+            # Log full traceback server-side; return a precise error to the admin UI
+            logger.exception("[RETRAIN ERROR]")
+            return jsonify({"error": "Internal server error", "details": str(e)}), 500
 
     @app.route("/upload_model", methods=["POST"])
     @login_required
@@ -1347,17 +1520,18 @@ def create_app():
             return jsonify({"error": "No file uploaded"}), 400
 
         file = request.files["model_file"]
-
         if not file.filename.endswith(".pkl"):
             return jsonify({"error": "File must be a .pkl"}), 400
 
         try:
             from tempfile import NamedTemporaryFile
-            import joblib
 
             with NamedTemporaryFile(delete=False) as tmp:
-                file.save(tmp.name)
-                loaded = joblib.load(tmp.name)
+                tmp_path = tmp.name
+                file.save(tmp_path)
+
+            loaded = joblib.load(tmp_path)
+            os.unlink(tmp_path)
 
             if not isinstance(loaded, tuple) or len(loaded) != 2:
                 return jsonify({"error": "Model format invalid. Expected (model, scaler) tuple."}), 400
@@ -1368,12 +1542,77 @@ def create_app():
                 return jsonify({"error": "Incorrect model or scaler type."}), 400
 
             joblib.dump((model, scaler), "radar_lightgbm_model.pkl")
-            save_model_metadata(-1, "upload")  # score unavailable; use -1 as placeholder
-            return jsonify({"status": "ok", "message": "Model uploaded and validated successfully."})
+            logger.info("[MODEL] Uploaded model saved to radar_lightgbm_model.pkl")
+
+            labels = list(getattr(model, "classes_", []))
+            features = list(getattr(model, "feature_name_", []) or [])
+
+            version = _next_model_version()
+            logger.info(f"[MODEL] Saving metadata: version={version}, source=upload, labels={len(labels)}, features={len(features)}")
+
+            # 1) Authoritative table (accuracy unknown for uploads)
+            save_model_metadata_db(version, features, None, labels)
+            # 2) UI “change” table (no accuracy)
+            save_model_info(None, "upload")
+            # 3) JSON sidecar
+            save_model_sidecar(None, "upload")
+
+            return jsonify({
+                "status": "ok",
+                "message": "Model uploaded and validated successfully.",
+                "version": version,
+                "labels": labels
+            })
 
         except Exception as e:
             logger.exception("[MODEL UPLOAD ERROR]")
             return jsonify({"error": "Upload failed", "details": str(e)}), 500
+        
+    def save_model_sidecar(accuracy, source):
+        """Sidecar cache for quick reads and debugging; not authoritative."""
+        metadata = {
+            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "accuracy": round(accuracy, 4) if accuracy is not None else None,
+            "source": source
+        }
+        try:
+            with open("model_metadata.json", "w") as f:
+                json.dump(metadata, f)
+            logger.info(f"[MODEL SIDEcar] Saved: {metadata}")
+        except Exception as e:
+            logger.error(f"[MODEL SIDEcar] Failed to save metadata: {e}")
+
+    def get_model_sidecar():
+        path = "radar_lightgbm_model.pkl"
+        meta_path = "model_metadata.json"
+
+        if not os.path.exists(path):
+            return {"status": "Model not found"}
+
+        try:
+            model, scaler = joblib.load(path)
+            classes = list(model.classes_) if hasattr(model, "classes_") else []
+
+            metadata = {
+                "status": "OK",
+                "trained_classes": classes,
+                "accuracy": None,
+                "updated_at": None,
+                "method": None,
+                "change": None
+            }
+
+            if os.path.exists(meta_path):
+                with open(meta_path, "r") as f:
+                    try:
+                        meta_data_file = json.load(f)
+                        metadata.update(meta_data_file)
+                    except Exception as e:
+                        logger.warning(f"Corrupt model metadata file: {e}")
+            return metadata
+        except Exception as e:
+            logger.error(f"[MODEL SIDEcar] Load error: {e}")
+            return {"status": "Error", "error": str(e)}
     
     @app.route("/control", methods=["GET", "POST"])
     @login_required
@@ -1403,9 +1642,28 @@ def create_app():
             try:
                 if action == "clear_db":
                     with get_db_connection() as conn:
-                        conn.execute("DELETE FROM radar_data")
+                        with conn.cursor() as cursor:
+                            cursor.execute("DELETE FROM radar_data")
                         conn.commit()
                     message = "All radar data cleared successfully."
+
+                elif action == "run_calibration":
+                    try:
+                        logger.info("Running radar-camera calibration...")
+                        run_calibration()
+                        logger.info("Calibration complete. Fitting projection matrix...")
+                        fit_projection_matrix()
+                        logger.info("Projection matrix fit complete.")
+                        flash("Calibration and projection fitting complete.", "success")
+                        message = "Calibration and projection fitting complete."   
+                        snapshot = None                                             
+                    except Exception as e:
+                        import traceback
+                        tb = traceback.format_exc()
+                        logger.error(f"Calibration error: {e}\n{tb}")
+                        flash(f"Calibration failed: {e}", "error")
+                        message = f"Calibration failed: {e}"  
+                        snapshot = ""
                     
                 elif action == "backup_db":
                     try:
@@ -1413,17 +1671,25 @@ def create_app():
                         backup_path = os.path.join(BACKUP_FOLDER, backup_name)
                         os.makedirs(BACKUP_FOLDER, exist_ok=True)
 
+                        env = os.environ.copy()
+                        env["PGPASSWORD"] = "securepass123"
+
                         result = subprocess.run(
-                            ["pg_dump", "-U", "radar_user", "-h", "localhost", "-d", "iwr6843_db", "-f", backup_path],
-                            env={**os.environ, "PGPASSWORD": "securepass123"},
+                            ["/usr/bin/pg_dump", "-U", "radar_user", "-h", "localhost", "-d", "iwr6843_db", "-f", backup_path],
+                            env=env,
+                            capture_output=True,
+                            text=True,
                             check=True
                         )
 
                         return send_file(backup_path, as_attachment=True, download_name=backup_name)
 
+                    except subprocess.CalledProcessError as e:
+                        logger.error(f"[BACKUP ERROR] pg_dump failed\nSTDOUT: {e.stdout}\nSTDERR: {e.stderr}")
+                        message = f"Database backup failed. Reason: {e.stderr.strip()}"
                     except Exception as e:
-                        logger.error(f"[BACKUP ERROR] {e}")
-                        message = f"Database backup failed: {str(e)}"
+                        logger.error(f"[BACKUP ERROR] Unexpected: {e}")
+                        message = f"Unexpected error during backup: {e}"
                     
                 elif action == "restore_db":
                     if 'backup_file' in request.files:
@@ -1434,16 +1700,42 @@ def create_app():
                             file.save(temp_path)
 
                             try:
-                                subprocess.run(
-                                    ["psql", "-U", "radar_user", "-h", "localhost", "-d", "iwr6843_db", "-f", temp_path],
-                                    env={**os.environ, "PGPASSWORD": "securepass123"},
+                                env = os.environ.copy()
+                                env["PGPASSWORD"] = "securepass123"
+
+                                result = subprocess.run(
+                                    ["/usr/bin/psql", "-U", "radar_user", "-h", "localhost", "-d", "iwr6843_db", "-f", temp_path],
+                                    env=env,
+                                    capture_output=True,
+                                    text=True,
                                     check=True
                                 )
+
                                 os.remove(temp_path)
-                                message = "Database restored successfully."
+
+                                # Post-restore validation
+                                import psycopg2
+                                try:
+                                    with psycopg2.connect(
+                                        dbname="iwr6843_db", user="radar_user", password="securepass123", host="localhost"
+                                    ) as conn:
+                                        with conn.cursor() as cur:
+                                            cur.execute("SELECT COUNT(*) FROM radar_data")
+                                            row_count = cur.fetchone()[0]
+                                            if row_count == 0:
+                                                message = "Restore completed, but no data was found. Check if the SQL file includes INSERT statements."
+                                            else:
+                                                message = f"Database restored successfully with {row_count} rows."
+                                except Exception as e:
+                                    logger.warning(f"[POST-RESTORE VALIDATION ERROR] {e}")
+                                    message = "Restore finished, but failed to verify data count."
+
                             except subprocess.CalledProcessError as e:
-                                message = f"Restore failed: {e}"
-                                logger.error(f"[RESTORE ERROR] {e}")
+                                logger.error(f"[RESTORE ERROR] Failed\nSTDOUT: {e.stdout}\nSTDERR: {e.stderr}")
+                                message = f"Restore failed: {e.stderr.strip()}"
+                            except Exception as e:
+                                logger.error(f"[RESTORE ERROR] Unexpected: {e}")
+                                message = f"Unexpected error during restore: {e}"
                         else:
                             message = "Please upload a valid .sql file."
                             
@@ -1475,19 +1767,21 @@ def create_app():
 
                 elif action == "test_radar":
                     try:
-                        result_1 = check_radar_connection(port="/dev/serial/by-id/usb-Silicon_Labs_CP2105_Dual_USB_to_UART_Bridge_Controller_0151A9D6-if00-port0", baudrate=115200)
-                        result_2 = check_radar_connection(port="/dev/serial/by-id/usb-Silicon_Labs_CP2105_Dual_USB_to_UART_Bridge_Controller_0151A9D6-if01-port0", baudrate=921600)
-
+                        cli_port = config.get("cli")
+                        data_port = config.get("data")
+                        
+                        result_1 = bool(cli_port)  
+                        result_2 = bool(data_port)  
+                        
                         if result_1 and result_2:
-                            message = "Radar test successful. Both UART ports are active."
-                            result_1.close()
-                            result_2.close()
+                            message = "Radar test successful. Both UART ports are configured."
                         elif result_1 or result_2:
-                            message = "Partial radar test passed. One UART port is responding."
-                            if result_1: result_1.close()
-                            if result_2: result_2.close()
+                            message = "Partial radar test passed. One UART port is configured."
                         else:
-                            message = "Radar test failed. Both UART ports unresponsive."
+                            message = "Radar test failed. No UART ports configured."
+                            
+                    except Exception as e:
+                        message = f"Radar test error: {str(e)}"
 
                     except Exception as e:
                         logger.error(f"[RADAR TEST] {e}")
@@ -1673,7 +1967,7 @@ def create_app():
 
             except Exception as e:
                 logger.warning(f"[CONTROL CAMERA TEST] Unexpected failure: {e}")
-
+        basedir = os.path.dirname(os.path.abspath(__file__))
         try:
             return render_template("control.html",
                 message=message,
@@ -1682,6 +1976,7 @@ def create_app():
                 total_records=total_records,
                 snapshot_records=snapshot_records,
                 snapshot=snapshot,
+                projection_matrix_exists = os.path.exists(os.path.join(basedir, "calibration", "camera_projection_matrix.npy")),
                 radar_status=radar_ok,
                 camera_status=camera_ok,
                 model_info=get_model_metadata()
@@ -1815,8 +2110,8 @@ def create_app():
                 if not user:
                     return jsonify({'success': False, 'error': 'User not found'}), 404
 
-                cursor.execute("DELETE FROM users WHERE id = %s", (user_id,))
                 cursor.execute("DELETE FROM user_activity WHERE user_id = %s", (user_id,))
+                cursor.execute("DELETE FROM users WHERE id = %s", (user_id,))
                 conn.commit()
 
             logger.info(f"[DELETE USER] Deleted user ID {user_id}")

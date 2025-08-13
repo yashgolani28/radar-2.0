@@ -1,33 +1,60 @@
-# Python bytecode
+# Python
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+*.env
+.env
 
-# Logs and outputs
-*.log
+# OS/Editors
+.DS_Store
+*.swp
+*.swo
+
+# Runtime artifacts
+logs/
 system-logs/
 radar-logs/
-*.csv
+snapshots/
+backups/
+*.log
+*.tmp
+*.cache
+*.pid
 
-# Model weights and artifacts
-*.pkl
+# Data
+*.db
+*.sqlite*
+*.csv
+*.np[yz]
+
+# Models (store via LFS)
 *.pt
 *.onnx
+*.pkl
+*.bin
 
-# Snapshots and media
-*.jpg
-*.jpeg
-*.png
-*.mp4
+# Flask/Gunicorn
+instance/
+*.sock
 
-# Configs and temp flags
+# Secrets / local config (commit a sanitized sample instead)
+app_config.json
+config.json
 config_sent.flag
-*.cfg
 
-# Backup or editor files
-*~
-*.swp
-.DS_Store
+# Radar cfg (often tweaked locally; ignore or include a sample)
+isk_config.cfg
+# Volatile runtime assets
+static/
+radar-logs/
+system-logs/
+__pycache__/
+*.pyc
+*.log
 
-# Ignore root-level binary artifacts
-test.jpg
+# Big artifacts (optional, see note below)
+snapshots/
+backups/
+*.npy
+*.npz

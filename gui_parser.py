@@ -95,8 +95,15 @@ class uartParser():
         # This ensures that we only read the part of the frame in that we are lacking
         frameLength -= 16 
 
-        # Read in rest of the frame
-        frameData += bytearray(self.dataCom.read(frameLength))
+        # Read the rest of the frame (serial.read may return fewer bytes)
+        remaining = frameLength
+        while remaining > 0:
+            chunk = self.dataCom.read(remaining)
+            if not chunk:
+                # Incomplete frame: drop and resync on next magic
+                return {}
+            frameData += bytearray(chunk)
+            remaining -= len(chunk)
  
         # frameData now contains an entire frame, send it to parser
         try:

@@ -50,18 +50,19 @@ def parseStandardFrame(frameData):
         try:
             tlvType, tlvLength = tlvHeaderDecode(frameData[:tlvHeaderLength])
             frameData = frameData[tlvHeaderLength:]
+            payload = frameData[:tlvLength]
         except Exception as e:
             outputDict['error'] = 2
             break  # stop parsing further
 
         # Detected Points
         if (tlvType == MMWDEMO_OUTPUT_MSG_DETECTED_POINTS): 
-            outputDict['numDetectedPoints'], outputDict['pointCloud'] = parsePointCloudTLV(frameData[:tlvLength], tlvLength, outputDict['pointCloud'])
+            outputDict['numDetectedPoints'], outputDict['pointCloud'] = parsePointCloudTLV(payload, tlvLength, outputDict['pointCloud'])
         # Range Profile
         elif (tlvType == MMWDEMO_OUTPUT_MSG_RANGE_PROFILE):
             try:
                 num_bins = int(tlvLength / 2)  # 2 bytes per bin
-                range_profile = struct.unpack(f"{num_bins}H", frameData[:tlvLength])
+                range_profile = struct.unpack(f"{num_bins}H", payload)
                 outputDict['range_profile'] = list(range_profile)
             except Exception as e:
                 logger.warning(f"[Parse] Failed RANGE_PROFILE TLV: {e}")
@@ -69,39 +70,91 @@ def parseStandardFrame(frameData):
         elif (tlvType == MMWDEMO_OUTPUT_MSG_NOISE_PROFILE):
             try:
                 num_bins = int(tlvLength / 2)
-                noise_profile = struct.unpack(f"{num_bins}H", frameData[:tlvLength])
+                noise_profile = struct.unpack(f"{num_bins}H", payload)
                 outputDict['noise_profile'] = list(noise_profile)
             except Exception as e:
                 logger.warning(f"[Parse] Failed NOISE_PROFILE TLV: {e}")
+        # Range–Doppler Heatmap (Lite, custom: 7001)
+        elif (tlvType == MMWDEMO_OUTPUT_MSG_RD_HEATMAP_LITE):
+            try:
+                # TLV layout: [rows(2), cols(2), offset_q7(2), scale_q7(2)] + rows*cols bytes
+                if tlvLength < 8:
+                    raise ValueError("RD_HEATMAP_LITE tlv too small")
+                rows, cols, off_q7, sc_q7 = struct.unpack('<HHhH', payload[:8])
+                pix = payload[8:8 + rows*cols]
+                if len(pix) != rows*cols:
+                    raise ValueError("RD_HEATMAP_LITE payload length mismatch")
+                # Store as uint8 list; the rest of the pipeline will flatten/reshape as needed
+                outputDict['range_doppler_heatmap'] = np.frombuffer(pix, dtype=np.uint8).tolist()
+                outputDict['range_doppler_meta'] = {
+                    "rows": int(rows), "cols": int(cols),
+                    "offset_q7": int(off_q7), "scale_q7": int(sc_q7)
+                }
+            except Exception as e:
+                logger.warning(f"[Parse] RD_HEATMAP_LITE failed: {e}")
         # Range Doppler Heatmap
         elif (tlvType == MMWDEMO_OUTPUT_MSG_RANGE_DOPPLER_HEAT_MAP):
             try:
-                heatmap = np.frombuffer(frameData[:tlvLength], dtype=np.int16)
+                if tlvLength % 2 != 0:
+                    raise ValueError("buffer size must be multiple of 2")
+                heatmap = np.frombuffer(payload, dtype=np.int16)
                 outputDict['range_doppler_heatmap'] = heatmap.tolist()
             except Exception as e:
-                logger.warning(f"[Parse] Failed RANGE_DOPPLER_HEAT_MAP TLV: {e}")
-        # Static Azimuth Heatmap
+                logger.debug(f"[Parse] RD_HEAT_MAP parse skipped: {e}")
+        # Static Azimuth / Range-Azimuth Heatmap
         elif (tlvType == MMWDEMO_OUTPUT_MSG_AZIMUT_STATIC_HEAT_MAP):
-            pass
+            try:
+                buf = payload  # use the sliced payload for this TLV
+                if tlvLength % 4 == 0:
+                    arr = np.frombuffer(buf, dtype=np.float32)
+                    if not np.isfinite(arr).all():
+                        arr = np.frombuffer(buf, dtype=np.int16).astype(np.float32)
+                elif tlvLength % 2 == 0:
+                    # Some firmwares send int16 or interleaved I/Q; we at least get magnitude
+                    i16 = np.frombuffer(buf, dtype=np.int16)
+                    if i16.size % 2 == 0:
+                        re = i16[0::2].astype(np.float32)
+                        im = i16[1::2].astype(np.float32)
+                        arr = np.sqrt(re*re + im*im)
+                    else:
+                        arr = i16.astype(np.float32)
+                else:
+                    raise ValueError("buffer size must be a multiple of element size")
+                outputDict['range_azimuth_heatmap'] = arr.tolist()
+                logger.info(f"[HEATMAP] Range-Azimuth heatmap len={arr.size}")
+            except Exception as e:
+                logger.warning(f"[Parse] Failed RANGE_AZIMUTH_HEATMAP TLV: {e}")
         # Performance Statistics
         elif (tlvType == MMWDEMO_OUTPUT_MSG_STATS):
-             outputDict['stats'] = parseStatsTLV(frameData[:tlvLength])
+            outputDict['stats'] = parseStatsTLV(payload)
         # Side Info
         elif (tlvType == MMWDEMO_OUTPUT_MSG_DETECTED_POINTS_SIDE_INFO):
-            outputDict['pointCloud'] = parseSideInfoTLV(frameData[:tlvLength], tlvLength, outputDict['pointCloud'])
+            outputDict['pointCloud'] = parseSideInfoTLV(payload, tlvLength, outputDict['pointCloud'])
          # Azimuth Elevation Static Heatmap
         elif (tlvType == MMWDEMO_OUTPUT_MSG_AZIMUT_ELEVATION_STATIC_HEAT_MAP):
-            pass
+            try:
+                if tlvLength % 4 == 0:
+                    arr = np.frombuffer(payload, dtype=np.float32)
+                elif tlvLength % 2 == 0:
+                    arr = np.frombuffer(payload, dtype=np.int16).astype(np.float32)
+                else:
+                    raise ValueError("buffer size must be a multiple of 2")
+                outputDict['azimuth_elevation_heatmap'] = arr.tolist()
+                # also surface under RA key so UI has one place to look
+                outputDict.setdefault('range_azimuth_heatmap', arr.tolist())
+                logger.info(f"[HEATMAP] Azimuth–Elevation heatmap len={arr.size}")
+            except Exception as e:
+                logger.warning(f"[Parse] Failed STATIC_HEATMAP TLV: {e}")
         # Temperature Statistics
         elif (tlvType == MMWDEMO_OUTPUT_MSG_TEMPERATURE_STATS):
             pass
         # Spherical Points
         elif (tlvType == MMWDEMO_OUTPUT_MSG_SPHERICAL_POINTS):
-            outputDict['numDetectedPoints'], outputDict['pointCloud'] = parseSphericalPointCloudTLV(frameData[:tlvLength], tlvLength, outputDict['pointCloud'])
+            outputDict['numDetectedPoints'], outputDict['pointCloud'] = parseSphericalPointCloudTLV(payload, tlvLength, outputDict['pointCloud'])
         # Target 3D
         elif tlvType == MMWDEMO_OUTPUT_MSG_TRACKERPROC_3D_TARGET_LIST:
             try:
-                track_data = parseTrackTLV(frameData[:tlvLength], tlvLength)
+                track_data = parseTrackTLV(payload, tlvLength)
                 outputDict['trackData'] = track_data
                 outputDict['numDetectedTracks'] = len(track_data)
                 logger.info(f"[parseTrackTLV] Parsed {len(track_data)} target(s)")

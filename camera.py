@@ -1,9 +1,8 @@
 import requests
 import os
 from datetime import datetime
-import time
-import urllib3
 from requests.auth import HTTPDigestAuth
+import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -49,7 +48,10 @@ def capture_snapshot(camera_url, output_dir="snapshots", username=None, password
                     print(f"[CAMERA ERROR] Snapshot too small: {file_size} bytes")
                     return None
                 return filename
-        return None
+        else:
+            print(f"[CAMERA ERROR] Snapshot request failed. Status: {response.status_code}")
+            return None
 
-    except Exception:
+    except Exception as e:
+        print(f"[CAMERA EXCEPTION] {e}")
         return None

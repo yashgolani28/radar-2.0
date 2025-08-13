@@ -11,6 +11,16 @@ import datetime
 # Local File Imports
 from gui_common import *
 
+# --- Radar constants (computed from config if available) ---
+_C_MPS = 299_792_458.0
+try:
+    from config_utils import load_config
+    _cfg = load_config()
+    _fc_ghz = float(_cfg.get("radar", {}).get("center_frequency_ghz", 60.0))
+except Exception:
+    _fc_ghz = 60.0
+_LAMBDA_M = _C_MPS / (_fc_ghz * 1e9)
+
 # ================================================== Common Helper Functions ==================================================
 
 # Convert 3D Spherical Points to Cartesian
@@ -208,8 +218,9 @@ def parseTrackTLV(tlvData, tlvLength):
                 "confidence": float(targetData[27]),
                 "speed_kmh": float(np.sqrt(targetData[4]**2 + targetData[5]**2 + targetData[6]**2) * 3.6),
                 "distance": float(np.sqrt(targetData[1]**2 + targetData[2]**2 + targetData[3]**2)),
-                "azimuth": np.rad2deg(np.arctan2(targetData[1], targetData[0] + 1e-6)),
-                "elevation": np.rad2deg(np.arctan2(targetData[3], np.sqrt(targetData[1]**2 + targetData[2]**2 + 1e-6))),
+                "azimuth": float(np.degrees(np.arctan2(targetData[1], targetData[2] + 1e-6))),
+                "elevation": float(np.degrees(np.arctan2(
+                    targetData[3], np.sqrt(targetData[1]**2 + targetData[2]**2 + 1e-6)))),
                 "snr": float(targetData[24]) if len(targetData) > 24 else 0.0,
                 "gain": float(targetData[25]) if len(targetData) > 25 else 0.0,
                 "type": "human"
@@ -224,8 +235,15 @@ def parseTrackTLV(tlvData, tlvLength):
     for i in range(numDetectedTargets):
         try:
             targetData = struct.unpack(targetStruct, tlvData[:targetSize])
-            vel = np.sqrt(targetData[4]**2 + targetData[5]**2 + targetData[6]**2)
-            doppler = 2 * vel / 0.005  # for 60GHz radar
+            px, py, pz = float(targetData[1]), float(targetData[2]), float(targetData[3])
+            vx, vy, vz = float(targetData[4]), float(targetData[5]), float(targetData[6])
+            vel_mag = float(np.sqrt(vx*vx + vy*vy + vz*vz))
+            rng = float(np.sqrt(px*px + py*py + pz*pz))
+            if rng > 1e-6:
+                v_radial = float((vx*px + vy*py + vz*pz) / rng)
+            else:
+                v_radial = 0.0
+            doppler = float((2.0 * v_radial) / _LAMBDA_M)
             snr = float(targetData[24]) if len(targetData) > 24 else 0.0
             gain = float(targetData[25]) if len(targetData) > 25 else 0.0
             signal = gain * snr if gain and snr else 0.0
@@ -243,10 +261,13 @@ def parseTrackTLV(tlvData, tlvLength):
                 "accZ": float(targetData[9]),
                 "g": float(targetData[26]),
                 "confidence": float(targetData[27]),
-                "speed_kmh": float(vel * 3.6),
+                "velocity": vel_mag,
+                "radial_velocity": v_radial,
+                "speed_kmh": float(vel_mag * 3.6),
                 "distance": float(np.sqrt(targetData[1]**2 + targetData[2]**2 + targetData[3]**2)),
-                "azimuth": np.rad2deg(np.arctan2(targetData[2], targetData[1] + 1e-6)),
-                "elevation": np.rad2deg(np.arctan2(targetData[3], np.sqrt(targetData[1]**2 + targetData[2]**2 + 1e-6))),
+                "azimuth": float(np.degrees(np.arctan2(targetData[1], targetData[2] + 1e-6))),
+                "elevation": float(np.degrees(np.arctan2(
+                    targetData[3], np.sqrt(targetData[1]**2 + targetData[2]**2 + 1e-6)))),
                 "snr": snr,
                 "gain": gain,
                 "doppler_frequency": doppler,

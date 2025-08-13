@@ -169,6 +169,9 @@
     <div class="card shadow-sm h-100">
       <div class="card-header d-flex justify-content-between align-items-center">
         <strong>Live Camera Feed</strong>
+        {% if is_admin %}
+        <button class="btn btn-sm btn-outline-success" onclick="triggerManualSnapshot()">Manual Snapshot</button>
+        {% endif %}
       </div>
       <div class="card-body p-2 d-flex justify-content-center align-items-center" style="height: 400px;">
         <img src="/camera_feed" class="img-fluid rounded"
@@ -180,25 +183,123 @@
     </div>
   </div>
 
-  <!-- 3D Heatmap Panel -->
-  <div class="col-lg-6 mb-3">
+    <!-- Radar Visualization Panel with Toggle -->
+    <div class="col-lg-6 mb-3">
     <div class="card shadow-sm h-100">
-      <div class="card-header d-flex justify-content-between align-items-center">
-        <strong>3D Heatmap</strong>
-        {% if is_admin %}
-        <button class="btn btn-sm btn-outline-success" onclick="triggerManualSnapshot()">Manual Snapshot</button>
-        {% endif %}
-      </div>
-      <div class="card-body p-2 d-flex justify-content-center align-items-center" style="height: 400px;">
-        <img src="/heatmap_feed" class="img-fluid rounded"
-             style="width:100%; height:100%; object-fit:cover;" />
-      </div>
-      <div class="card-footer text-center small">
-        Source: <strong>Radar Visualization</strong>
-      </div>
+        <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>Radar Visualization</strong>
+        <div class="btn-group btn-group-sm" role="group" aria-label="Viz toggle">
+            <button id="btnHeatmap" type="button" class="btn btn-outline-primary active">Heatmap</button>
+            <button id="btnScatter" type="button" class="btn btn-outline-primary">Scatter</button>
+        </div>
+        </div>
+
+        <div class="card-body p-0 position-relative" style="height: 400px;">
+        <img id="vizStream"
+            src="/heatmap_feed"
+            class="w-100 h-100 rounded-0"
+            style="object-fit:cover; background:#111;"
+            alt="Radar visualization" loading="eager">
+        <div id="vizSpinner"
+            class="position-absolute top-50 start-50 translate-middle d-none">
+            <div class="spinner-border" role="status" aria-label="Loading"></div>
+        </div>
+        </div>
+
+        <div class="card-footer text-center small">
+        Mode: <strong id="vizModeLabel">Range–Azimuth Heatmap</strong>
+        </div>
     </div>
-  </div>
+    </div>
 </div>
+<script>
+(() => {
+  const img = document.getElementById('vizStream');
+  const btnHeatmap = document.getElementById('btnHeatmap');
+  const btnScatter = document.getElementById('btnScatter');
+  const label = document.getElementById('vizModeLabel');
+  const spinner = document.getElementById('vizSpinner');
+
+  let currentMode = null;
+  let retryTimer = null;
+  let backoffMs = 800;
+
+  function setActive(button, isActive) {
+    button.classList.toggle('active', isActive);
+    button.classList.toggle('btn-primary', isActive);
+    button.classList.toggle('btn-outline-primary', !isActive);
+  }
+
+  function showSpinner(show) {
+    spinner.classList.toggle('d-none', !show);
+  }
+
+  function streamUrlFor(mode) {
+    return mode === 'scatter' ? '/scatter_feed' : '/heatmap_feed';
+  }
+
+  function stillUrlFor(mode) {
+    return mode === 'scatter' ? '/static/scatter_3d.png' : '/static/heatmap_3d.png';
+  }
+
+  function setViz(mode, { force=false } = {}) {
+    if (!force && mode === currentMode) return;
+    currentMode = mode;
+
+    // UI state
+    if (mode === 'scatter') {
+      label.textContent = '3D Scatter (Point Cloud)';
+      setActive(btnHeatmap, false);
+      setActive(btnScatter, true);
+    } else {
+      label.textContent = 'Range–Azimuth Heatmap';
+      setActive(btnHeatmap, true);
+      setActive(btnScatter, false);
+    }
+
+    localStorage.setItem('vizMode', mode);
+    showSpinner(true);
+
+    // Cleanly drop old MJPEG connection, then start new one with a cache-buster
+    img.src = '';
+    const src = streamUrlFor(mode) + '?ts=' + Date.now();
+    // Small delay helps some browsers fully tear down the old request
+    setTimeout(() => { img.src = src; }, 50);
+
+    // reset retry backoff
+    clearTimeout(retryTimer);
+    backoffMs = 800;
+  }
+
+  btnHeatmap.addEventListener('click', () => setViz('heatmap'));
+  btnScatter.addEventListener('click', () => setViz('scatter'));
+
+  img.addEventListener('load', () => {
+    showSpinner(false);
+    clearTimeout(retryTimer);
+    backoffMs = 800;
+  });
+
+  img.addEventListener('error', () => {
+    // Show last still frame, then schedule a retry with capped backoff
+    img.src = stillUrlFor(currentMode) + '?t=' + Date.now();
+    showSpinner(true);
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(() => setViz(currentMode, { force:true }), Math.min(backoffMs, 5000));
+    backoffMs = Math.min(backoffMs * 1.6, 5000);
+  });
+
+  // Restore last choice (default to heatmap)
+  setViz(localStorage.getItem('vizMode') || 'heatmap', { force:true });
+
+  // Optional keyboard shortcuts: H / S
+  document.addEventListener('keydown', (e) => {
+    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+    if (e.key.toLowerCase() === 'h') setViz('heatmap');
+    if (e.key.toLowerCase() === 's') setViz('scatter');
+  });
+})();
+</script>
 
 <script>
 function triggerManualSnapshot() {
@@ -216,6 +317,7 @@ function triggerManualSnapshot() {
     });
 }
 </script>
+
 
 <!-- Recent Detections -->
 {% if snapshots %}
@@ -253,10 +355,12 @@ function triggerManualSnapshot() {
                                 <div class="col-12"><strong>Object ID:</strong> {{ snap.object_id or "N/A" }}</div>
                                 <div class="col-6"><strong>Speed:</strong> {{ snap.speed }} km/h</div>
                                 <div class="col-6"><strong>Distance:</strong> {{ snap.distance }} m</div>
+                                <div class="col-6"><strong>Azimuth:</strong> {{ snap.azimuth }}° </div>
+                                <div class="col-6"><strong>Elevation:</strong> {{ snap.elevation }}°</div>
                                 <div class="col-6"><strong>Direction:</strong> {{ snap.direction or "N/A" }}</div>
-                                <div class="col-6"><strong>Motion:</strong> {{ snap.motion_state }}</div>
-                                <div class="col-12"><strong>Snapshot Type:</strong> {{ snap.snapshot_type.upper() if snap.snapshot_type else "AUTO" }}</div>
-                                <div class="col-12">
+                                <div class="col-6"><strong>Motion:</strong> {{ snap.motion_state or "N/A" }}</div>
+                                <div class="col-6"><strong>Snapshot Type:</strong> {{ snap.snapshot_type.upper() if snap.snapshot_type else "AUTO" }}</div>
+                                <div class="col-6">
                                 <strong>Time:</strong>
                                 {{ snap.datetime.strftime("%H:%M:%S") if snap.datetime and snap.datetime.__class__.__name__ == "datetime" else snap.datetime or "N/A" }}
                                 </div>
@@ -273,8 +377,8 @@ function triggerManualSnapshot() {
     <div class="card">
         <div class="card-body text-center py-5">
             <div class="display-6 text-body-secondary mb-3">📡</div>
-            <h5 class="text-body-secondary">No Recent Detections</h5>
-            <p class="text-body-secondary">System is monitoring... New detections will appear here.</p>
+            <h5>No Recent Detections</h5>
+            <p>System is monitoring... New detections will appear here.</p>
         </div>
     </div>
 {% endif %}

@@ -255,17 +255,27 @@
     <div class="row g-4">
       <div class="col-md-6">
         <div class="p-3 border rounded h-100 d-flex flex-column justify-content-between" style="background-color: var(--card-bg);">
-          <div>
+        <div>
             <h6 class="fw-bold text-success mb-2">
-              <i class="fas fa-trophy me-2"></i>Model Accuracy:
-              <span id="modelAccuracy">{{ model_info.accuracy|round(2) if model_info else '--' }}%</span>
-              {% if model_info and model_info.change is not none %}
-                {% if model_info.change > 0 %}<i class="fas fa-arrow-up text-success"></i>{% elif model_info.change < 0 %}<i class="fas fa-arrow-down text-danger"></i>{% endif %}
-              {% endif %}
+            <i class="fas fa-trophy me-2"></i>Model Accuracy:
+            <span id="modelAccuracy">
+                {% if model_info and model_info.accuracy is not none and model_info.accuracy != -1 %}
+                {{ model_info.accuracy | round(2) }}%
+                {% else %}
+                --
+                {% endif %}
+            </span>
+            {% if model_info and model_info.change is not none %}
+                {% if model_info.change > 0 %}
+                <i class="fas fa-arrow-up text-success"></i>
+                {% elif model_info.change < 0 %}
+                <i class="fas fa-arrow-down text-danger"></i>
+                {% endif %}
+            {% endif %}
             </h6>
-            <p class="mb-1">Last Updated: <strong>{{ model_info.updated_at if model_info else '--' }}</strong></p>
-            <p class="mb-0">Method: <code>{{ model_info.method if model_info else '--' }}</code></p>
-          </div>
+            <p class="mb-1">Last Updated: <strong>{{ model_info.updated_at if model_info and model_info.updated_at else '--' }}</strong></p>
+            <p class="mb-0">Method: <code>{{ model_info.method if model_info and model_info.method else '--' }}</code></p>
+        </div>
         </div>
       </div>
       <div class="col-md-6">
@@ -324,6 +334,36 @@ document.getElementById('uploadModelForm').addEventListener('submit', e => {
     .catch(err => alert("Upload error: " + err));
 });
 </script>
+
+<!-- Calibration Utility -->
+<div class="card shadow-sm mb-5">
+  <div class="card-header" style="background-color: var(--section-bg); color: var(--text-color);">
+    <h5 class="mb-0"><i class="fas fa-crosshairs me-2"></i>Radar-Camera Calibration</h5>
+  </div>
+  <div class="card-body">
+    <p class="mb-3 text-center">
+      <i class="fas fa-upload me-2 text-center"></i>
+      Note: Use this only on minimal high-confidence data (e.g., 4–6 annotated snapshots).
+    </p>
+    <form method="POST" class="d-grid gap-3">
+      <button type="submit" name="action" value="run_calibration" 
+              class="btn btn-outline-primary btn-lg"
+              onclick="return confirm('Run radar-camera calibration utility? Make sure you have at least 4 annotated snapshots.')">
+        <i class="fas fa-ruler-combined me-2"></i>Run Calibration Utility
+      </button>
+
+      {% if projection_matrix_exists %}
+        <div class="text-success mt-2 text-center">
+          <i class="fas fa-check-circle me-1"></i>Projection matrix available
+        </div>
+      {% else %}
+        <div class="text-danger mt-2 text-center">
+          <i class="fas fa-times-circle me-1"></i>No projection matrix found
+        </div>
+      {% endif %}
+    </form>
+  </div>
+</div>
 
 <!-- System Tools and Database Management -->
 <div class="row g-4 mb-5">

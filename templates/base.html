@@ -680,7 +680,7 @@
                 <img src="{{ url_for('static', filename='essi_logo.jpeg') }}"
                     alt="ESSI Logo" 
                     style="height: 36px; border-radius: 8px; background: white; padding: 2px;">
-                <span class="d-none d-sm-inline">Radar System</span>
+                <span class="d-none d-sm-inline">Speed Violation Detection System</span>
             </a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
                 <span class="navbar-toggler-icon"></span>
@@ -777,7 +777,7 @@
         <div class="container">
             <div class="row">
                 <div class="col-md-6 text-md-start">
-                    <small>&copy; {{ now.year if now else '2025' }} Radar Detection System</small>
+                    <small>&copy; {{ now.year if now else '2025' }} Speed Violation Detection System -<a href="https://www.essi.co.in/">ESSI</a></small>
                 </div>
                 <div class="col-md-6 text-md-end">
                     <small>
@@ -802,6 +802,7 @@
                 this.initializeNavigation();
                 this.initializeSessionManagement();
                 this.initializeModalHandling();
+                this.dedupeModalIds(['imageModal','downloadConfirmModal','deleteUserModal','baseAddUserModal','baseChangePasswordModal']);
                 this.initializeFormHandling();
                 this.initializeAccessibility();
                 this.initializeDropdowns();
@@ -811,6 +812,13 @@
                 this.initializeTooltips();
             }
 
+            dedupeModalIds(ids) {
+            ids.forEach(id => {
+                const nodes = document.querySelectorAll('#' + id);
+                nodes.forEach((el, idx) => { if (idx > 0) el.remove(); });
+            });
+            }
+            
             initializeNavigation() {
                 const currentPath = window.location.pathname;
                 const navLinks = document.querySelectorAll('.nav-link:not(.dropdown-toggle)');
@@ -1081,17 +1089,6 @@
                         document.body.style.removeProperty('padding-right');
                     }, 150);
                 };
-
-                document.addEventListener('hidden.bs.modal', (e) => {
-                    setTimeout(() => {
-                        const remainingBackdrops = document.querySelectorAll('.modal-backdrop');
-                        if (remainingBackdrops.length === 0) {
-                            document.body.classList.remove('modal-open');
-                            document.body.style.removeProperty('overflow');
-                            document.body.style.removeProperty('padding-right');
-                        }
-                    }, 200);
-                });
             }
 
             initializeFormHandling() {
